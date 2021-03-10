@@ -2010,7 +2010,7 @@ havoc_stage:
 
   }
 
-  if (unlikely(get_cur_time() - afl->last_path_time > 60000 &&
+  if (unlikely(get_cur_time() - afl->last_path_time > 5000 &&
                afl->ready_for_splicing_count > 1)) {
 
     /* add expensive havoc cases here if there is no findings in the last 60s */
