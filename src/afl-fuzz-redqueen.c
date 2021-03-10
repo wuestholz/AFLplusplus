@@ -1575,7 +1575,7 @@ static void try_to_add_to_dictN(afl_state_t *afl, u128 v, u8 size) {
 static u8 cmp_fuzz(afl_state_t *afl, u32 key, u8 *orig_buf, u8 *buf, u8 *cbuf,
                    u32 len, u32 lvl, struct tainted *taint) {
 
-  struct cmp_header *h = &afl->shm.cmp_map->headers[key];
+  struct cmp_header *h = &afl->orig_cmp_map->headers[key];
   struct tainted *   t;
   u32                i, j, idx, taint_len, loggeds;
   u32                have_taint = 1;
@@ -2286,7 +2286,7 @@ static u8 rtn_fuzz(afl_state_t *afl, u32 key, u8 *orig_buf, u8 *buf, u8 *cbuf,
                    u32 len, u8 lvl, struct tainted *taint) {
 
   struct tainted *   t;
-  struct cmp_header *h = &afl->shm.cmp_map->headers[key];
+  struct cmp_header *h = &afl->orig_cmp_map->headers[key];
   u32                i, j, idx, have_taint = 1, taint_len, loggeds;
   u8                 status = 0, found_one = 0;
 
@@ -2490,8 +2490,6 @@ u8 input_to_state_stage(afl_state_t *afl, u8 *orig_buf, u8 *buf, u32 len) {
 #endif
 
   // Generate the cmplog data
-  u32 k, l;
-
   // manually clear the full cmp_map
   memset(afl->shm.cmp_map, 0, sizeof(struct cmp_map));
   if (unlikely(common_fuzz_cmplog_stuff(afl, orig_buf, len))) {
@@ -2517,7 +2515,7 @@ u8 input_to_state_stage(afl_state_t *afl, u8 *orig_buf, u8 *buf, u32 len) {
 
   memcpy(afl->orig_cmp_map, afl->shm.cmp_map, sizeof(struct cmp_map));
 
-  // check for unstable items
+  // check for unstable items by running the same input again
   memset(afl->shm.cmp_map->headers, 0, sizeof(struct cmp_header) * CMP_MAP_W);
   if (unlikely(common_fuzz_cmplog_stuff(afl, orig_buf, len))) {
 
@@ -2535,135 +2533,46 @@ u8 input_to_state_stage(afl_state_t *afl, u8 *orig_buf, u8 *buf, u32 len) {
   }
 
 #if defined(_DEBUG) || defined(CMPLOG_INTROSPECTION)
-  u32 unstable_cmp_f = 0, unstable_rtn_f = 0, unstable_cmp_s = 0,
-      unstable_rtn_s = 0;
+  u32 unstable_cmp_f = 0;
 #endif
 
+  u32 k;
   for (k = 0; k < CMP_MAP_W; ++k) {
 
-    if (afl->pass_stats[k].faileds < CMPLOG_FAIL_MAX) {
+    if (afl->pass_stats[k].faileds < CMPLOG_FAIL_MAX &&
+        afl->pass_stats[k].total < CMPLOG_FAIL_MAX) {
 
       if (unlikely(afl->orig_cmp_map->headers[k].hits)) {
 
-        if (afl->shm.cmp_map->headers[k].hits !=
-                afl->orig_cmp_map->headers[k].hits ||
-            afl->shm.cmp_map->headers[k].type !=
+        if (afl->shm.cmp_map->headers[k].type !=
                 afl->orig_cmp_map->headers[k].type ||
-            afl->shm.cmp_map->headers[k].shape !=
-                afl->orig_cmp_map->headers[k].shape) {
+            (afl->shm.cmp_map->headers[k].shape !=
+                 afl->orig_cmp_map->headers[k].shape &&
+             afl->orig_cmp_map->headers[k].type == CMP_TYPE_INS)) {
 
-          if (afl->orig_cmp_map->headers[k].type != CMP_TYPE_INS &&
-              afl->shm.cmp_map->headers[k].hits ==
-                  afl->orig_cmp_map->headers[k].hits &&
-              afl->shm.cmp_map->headers[k].type ==
-                  afl->orig_cmp_map->headers[k].type) {
-
-            // for RTN the shape can be different which is fine though
-            if (afl->shm.cmp_map->headers[k].shape <
-                afl->orig_cmp_map->headers[k].shape) {
-
-              afl->orig_cmp_map->headers[k].shape =
-                  afl->shm.cmp_map->headers[k].shape;
-
-            }
-
-          } else {
-
-            afl->pass_stats[k].faileds++;
-            afl->orig_cmp_map->headers[k].hits = 0;
+          afl->pass_stats[k].faileds++;
+          afl->orig_cmp_map->headers[k].hits = 0;
 #if defined(_DEBUG) || defined(CMPLOG_INTROSPECTION)
-            if (afl->orig_cmp_map->headers[k].type == CMP_TYPE_INS)
-              ++unstable_cmp_f;
-            else
-              ++unstable_rtn_f;
+          ++unstable_cmp_f;
 #endif
-
-          }
 
         }
 
       }
 
-      if (unlikely(afl->orig_cmp_map->headers[k].hits)) {
+    } else {
 
-        if (afl->orig_cmp_map->headers[k].type == CMP_TYPE_INS) {
-
-          if (afl->orig_cmp_map->headers[k].hits > CMP_MAP_H) {
-
-            afl->orig_cmp_map->headers[k].hits = CMP_MAP_H;
-
-          }
-
-        } else {
-
-          if (afl->orig_cmp_map->headers[k].hits > CMP_MAP_RTN_H) {
-
-            afl->orig_cmp_map->headers[k].hits = CMP_MAP_RTN_H;
-
-          }
-
-        }
-
-        for (l = 0; l < afl->orig_cmp_map->headers[k].hits; ++l) {
-
-          u8 *v01, *v00 = (u8 *)&afl->shm.cmp_map->log[k][l].v0;
-          u8 *v11, *v10 = (u8 *)&afl->orig_cmp_map->log[k][l].v0;
-
-          if (afl->orig_cmp_map->headers[k].type == CMP_TYPE_INS) {
-
-            v01 = (u8 *)&afl->shm.cmp_map->log[k][l].v1;
-            v11 = (u8 *)&afl->orig_cmp_map->log[k][l].v1;
-
-          } else {
-
-            v01 = ((u8 *)&afl->shm.cmp_map->log[k][l].v1_128) + 8;
-            v11 = ((u8 *)&afl->orig_cmp_map->log[k][l].v1_128) + 8;
-
-          }
-
-          if (memcmp(v01, v11, afl->orig_cmp_map->headers[k].shape + 1) != 0 ||
-              memcmp(v00, v10, afl->orig_cmp_map->headers[k].shape + 1) != 0) {
-
-            if (afl->orig_cmp_map->headers[k].type != CMP_TYPE_INS) {
-
-              u32 len = 0;
-              for (len = 0; len <= afl->orig_cmp_map->headers[k].shape; ++len)
-                if (v01[len] != v11[len] || v00[len] != v10[len]) break;
-
-              if (len) {
-
-                afl->orig_cmp_map->headers[k].shape = len;
-                continue;
-
-              }
-
-#if defined(_DEBUG) || defined(CMPLOG_INTROSPECTION)
-              ++unstable_rtn_s;
-
-            } else {
-
-              ++unstable_cmp_s;
+      afl->orig_cmp_map->headers[k].hits = 0;
+#ifdef _DEBUG
+      fprintf(stderr, "DISABLED %u\n", k);
 #endif
-
-            }
-
-            afl->pass_stats[k].faileds++;
-            afl->orig_cmp_map->headers[k].hits = 0;
-            continue;
-
-          }
-
-        }
-
-      }
 
     }
 
   }
 
 #if defined(_DEBUG) || defined(CMPLOG_INTROSPECTION)
-  if (unlikely(unstable_cmp_f || unstable_rtn_f || unstable_cmp_s ||
-               unstable_rtn_s)) {
+  if (unlikely(unstable_cmp_f)) {
 
     FILE *f = stderr;
   #ifndef _DEBUG
@@ -2679,11 +2588,8 @@ u8 input_to_state_stage(afl_state_t *afl, u8 *orig_buf, u8 *buf, u32 len) {
 
     if (f) {
 
-      fprintf(f,
-              "Unstable: fname=%s len=%u unstable_cmp_f=%u unstable_rtn_f=%u "
-              "unstable_cmp_s=%u unstable_rtn_s=%u\n",
-              afl->queue_cur->fname, len, unstable_cmp_f, unstable_rtn_f,
-              unstable_cmp_s, unstable_rtn_s);
+      fprintf(f, "Unstable: fname=%s len=%u unstable_cmp_f=%u\n",
+              afl->queue_cur->fname, len, unstable_cmp_f);
 
   #ifndef _DEBUG
       if (afl->not_on_tty) { fclose(f); }
@@ -2723,6 +2629,7 @@ u8 input_to_state_stage(afl_state_t *afl, u8 *orig_buf, u8 *buf, u32 len) {
   orig_hit_cnt = afl->queued_paths + afl->unique_crashes;
   u64 screen_update = 100000 / afl->queue_cur->exec_us,
       execs = afl->fsrv.total_execs;
+  u32 hits = afl->orig_cmp_map->headers[k].hits;
 
   afl->stage_name = "input-to-state";
   afl->stage_short = "its";
@@ -2743,42 +2650,31 @@ u8 input_to_state_stage(afl_state_t *afl, u8 *orig_buf, u8 *buf, u32 len) {
 
   for (k = 0; k < CMP_MAP_W; ++k) {
 
-    if (!afl->shm.cmp_map->headers[k].hits) { continue; }
+    if (likely(!hits)) { continue; }
 
-    if (afl->pass_stats[k].faileds >= CMPLOG_FAIL_MAX ||
-        afl->pass_stats[k].total >= CMPLOG_FAIL_MAX) {
+    if (afl->orig_cmp_map->headers[k].type == CMP_TYPE_INS) {
 
-#ifdef _DEBUG
-      fprintf(stderr, "DISABLED %u\n", k);
-#endif
-
-      afl->shm.cmp_map->headers[k].hits = 0;  // ignore this cmp
-
-    }
-
-    if (afl->shm.cmp_map->headers[k].type == CMP_TYPE_INS) {
-
-      afl->stage_max +=
-          MIN((u32)(afl->shm.cmp_map->headers[k].hits), (u32)CMP_MAP_H);
+      if (hits > CMP_MAP_H) { hits = CMP_MAP_H; }
 
     } else {
 
-      afl->stage_max +=
-          MIN((u32)(afl->shm.cmp_map->headers[k].hits), (u32)CMP_MAP_RTN_H);
+      if (hits > CMP_MAP_RTN_H) { hits = CMP_MAP_RTN_H; }
 
     }
+
+    afl->stage_max += hits;
 
   }
 
   for (k = 0; k < CMP_MAP_W; ++k) {
 
-    if (!afl->shm.cmp_map->headers[k].hits) { continue; }
+    if (likely(!hits)) { continue; }
 
 #if defined(_DEBUG) || defined(CMPLOG_INTROSPECTION)
     ++cmp_locations;
 #endif
 
-    if (afl->shm.cmp_map->headers[k].type == CMP_TYPE_INS) {
+    if (afl->orig_cmp_map->headers[k].type == CMP_TYPE_INS) {
 
       if (unlikely(cmp_fuzz(afl, k, orig_buf, buf, cbuf, len, lvl, taint))) {
 
