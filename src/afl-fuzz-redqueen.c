@@ -29,7 +29,7 @@
 #include "cmplog.h"
 
 //#define _DEBUG
-#define CMPLOG_INTROSPECTION
+//#define CMPLOG_INTROSPECTION
 
 // CMP attribute enum
 enum {
