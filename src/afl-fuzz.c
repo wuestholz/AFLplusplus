@@ -1022,32 +1022,6 @@ int main(int argc, char **argv_orig, char **envp) {
 
   }
 
-  if (afl->fsrv.qemu_mode && getenv("AFL_USE_QASAN")) {
-
-    u8 *preload = getenv("AFL_PRELOAD");
-    u8 *libqasan = get_libqasan_path(argv_orig[0]);
-
-    if (!preload) {
-
-      setenv("AFL_PRELOAD", libqasan, 0);
-
-    } else {
-
-      u8 *result = ck_alloc(strlen(libqasan) + strlen(preload) + 2);
-      strcpy(result, libqasan);
-      strcat(result, " ");
-      strcat(result, preload);
-
-      setenv("AFL_PRELOAD", result, 1);
-      ck_free(result);
-
-    }
-
-    afl->afl_env.afl_preload = (u8 *)getenv("AFL_PRELOAD");
-    ck_free(libqasan);
-
-  }
-
   if (afl->fsrv.mem_limit && afl->shm.cmplog_mode) afl->fsrv.mem_limit += 260;
 
   OKF("afl++ is maintained by Marc \"van Hauser\" Heuse, Heiko \"hexcoder\" "
@@ -1312,38 +1286,7 @@ int main(int argc, char **argv_orig, char **envp) {
 
     if (afl->fsrv.qemu_mode) {
 
-      u8 *qemu_preload = getenv("QEMU_SET_ENV");
-      u8 *afl_preload = getenv("AFL_PRELOAD");
-      u8 *buf;
-
-      s32 j, afl_preload_size = strlen(afl_preload);
-      for (j = 0; j < afl_preload_size; ++j) {
-
-        if (afl_preload[j] == ',') {
-
-          PFATAL(
-              "Comma (',') is not allowed in AFL_PRELOAD when -Q is "
-              "specified!");
-
-        }
-
-      }
-
-      if (qemu_preload) {
-
-        buf = alloc_printf("%s,LD_PRELOAD=%s,DYLD_INSERT_LIBRARIES=%s",
-                           qemu_preload, afl_preload, afl_preload);
-
-      } else {
-
-        buf = alloc_printf("LD_PRELOAD=%s,DYLD_INSERT_LIBRARIES=%s",
-                           afl_preload, afl_preload);
-
-      }
-
-      setenv("QEMU_SET_ENV", buf, 1);
-
-      ck_free(buf);
+      /* afl-qemu-trace takes care of converting AFL_PRELOAD. */
 
     } else {
 
@@ -1584,11 +1527,13 @@ int main(int argc, char **argv_orig, char **envp) {
   if (!afl->non_instrumented_mode && !afl->fsrv.qemu_mode &&
       !afl->unicorn_mode) {
 
-    if (map_size <= 8000000 && !afl->non_instrumented_mode &&
+    if (map_size <= DEFAULT_SHMEM_SIZE && !afl->non_instrumented_mode &&
         !afl->fsrv.qemu_mode && !afl->unicorn_mode) {
 
-      afl->fsrv.map_size = 8000000;  // dummy temporary value
-      setenv("AFL_MAP_SIZE", "8000000", 1);
+      afl->fsrv.map_size = DEFAULT_SHMEM_SIZE;  // dummy temporary value
+      char vbuf[16];
+      snprintf(vbuf, sizeof(vbuf), "%u", DEFAULT_SHMEM_SIZE);
+      setenv("AFL_MAP_SIZE", vbuf, 1);
 
     }
 
@@ -1596,9 +1541,9 @@ int main(int argc, char **argv_orig, char **envp) {
         &afl->fsrv, afl->argv, &afl->stop_soon, afl->afl_env.afl_debug_child);
 
     // only reinitialize when it makes sense
-    if ((map_size < new_map_size ||
-        (new_map_size != MAP_SIZE && new_map_size < map_size &&
-         map_size - new_map_size > MAP_SIZE))) {
+    if ((map_size < new_map_size /*||
+         (new_map_size != MAP_SIZE && new_map_size < map_size &&
+          map_size - new_map_size > MAP_SIZE)*/)) {
 
       OKF("Re-initializing maps to %u bytes", new_map_size);
 
@@ -1627,8 +1572,6 @@ int main(int argc, char **argv_orig, char **envp) {
 
     }
 
-    afl->fsrv.map_size = map_size;
-
   }
 
   if (afl->cmplog_binary) {
@@ -1641,11 +1584,15 @@ int main(int argc, char **argv_orig, char **envp) {
     afl->cmplog_fsrv.cmplog_binary = afl->cmplog_binary;
     afl->cmplog_fsrv.init_child_func = cmplog_exec_child;
 
-    if (map_size <= 8000000 && !afl->non_instrumented_mode &&
-        !afl->fsrv.qemu_mode && !afl->unicorn_mode) {
+    if ((map_size <= DEFAULT_SHMEM_SIZE ||
+         afl->cmplog_fsrv.map_size < map_size) &&
+        !afl->non_instrumented_mode && !afl->fsrv.qemu_mode &&
+        !afl->unicorn_mode) {
 
-      afl->cmplog_fsrv.map_size = 8000000;  // dummy temporary value
-      setenv("AFL_MAP_SIZE", "8000000", 1);
+      afl->cmplog_fsrv.map_size = MAX(map_size, (u32)DEFAULT_SHMEM_SIZE);
+      char vbuf[16];
+      snprintf(vbuf, sizeof(vbuf), "%u", afl->cmplog_fsrv.map_size);
+      setenv("AFL_MAP_SIZE", vbuf, 1);
 
     }
 
@@ -1680,18 +1627,24 @@ int main(int argc, char **argv_orig, char **envp) {
       setenv("AFL_NO_AUTODICT", "1", 1);  // loaded already
       afl->fsrv.trace_bits =
           afl_shm_init(&afl->shm, new_map_size, afl->non_instrumented_mode);
+      afl->cmplog_fsrv.trace_bits = afl->fsrv.trace_bits;
       afl_fsrv_start(&afl->fsrv, afl->argv, &afl->stop_soon,
                      afl->afl_env.afl_debug_child);
       afl_fsrv_start(&afl->cmplog_fsrv, afl->argv, &afl->stop_soon,
                      afl->afl_env.afl_debug_child);
 
-    } else {
-
-      afl->cmplog_fsrv.map_size = new_map_size;
-
     }
 
     OKF("Cmplog forkserver successfully started");
+
+  }
+
+  if (afl->debug) {
+
+    printf("NORMAL %u, CMPLOG %u\n", afl->fsrv.map_size,
+           afl->cmplog_fsrv.map_size);
+    fprintf(stderr, "NORMAL %u, CMPLOG %u\n", afl->fsrv.map_size,
+            afl->cmplog_fsrv.map_size);
 
   }
 
