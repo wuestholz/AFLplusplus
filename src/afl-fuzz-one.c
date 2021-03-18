@@ -1999,14 +1999,14 @@ havoc_stage:
 
   u32 r_max, r;
 
-  r_max = 96 + (afl->extras_cnt ? 8 : 0) + (afl->a_extras_cnt ? 4 : 0);
+  r_max = 89 + (afl->extras_cnt ? 8 : 0) + (afl->a_extras_cnt ? 2 : 0);
 
   if (unlikely(afl->expand_havoc && afl->ready_for_splicing_count > 1)) {
 
     /* add expensive havoc cases here, they are activated after a full
        cycle without finds happened */
 
-    r_max += 4;
+    r_max += 3;
 
   }
 
@@ -2015,7 +2015,7 @@ havoc_stage:
 
     /* add expensive havoc cases here if there is no findings in the last 60s */
 
-    r_max += 4;
+    r_max += 3;
 
   }
 
@@ -2074,8 +2074,7 @@ havoc_stage:
         case 2:
         case 3:
         case 4:
-        case 5:
-        case 6: {
+        case 5: {
 
           /* Flip a single bit somewhere. Spooky! */
 
@@ -2088,12 +2087,11 @@ havoc_stage:
 
         }
 
+        case 6:
         case 7:
         case 8:
         case 9:
-        case 10:
-        case 11:
-        case 12: {
+        case 10: {
 
           /* Set byte to interesting value. */
 
@@ -2107,9 +2105,8 @@ havoc_stage:
 
         }
 
-        case 13:
-        case 14:
-        case 15: {
+        case 11:
+        case 12: {
 
           /* Set word to interesting value.. */
           if (temp_len < 2) { break; }
@@ -2124,9 +2121,8 @@ havoc_stage:
 
         }
 
-        case 16:
-        case 17:
-        case 18: {
+        case 13:
+        case 14: {
 
           /* Set word to interesting BE value. */
 
@@ -2143,9 +2139,8 @@ havoc_stage:
 
         }
 
-        case 19:
-        case 20:
-        case 21:
+        case 15:
+        case 16:
           /* Set dword to interesting value. */
           {
 
@@ -2161,9 +2156,8 @@ havoc_stage:
 
           }
 
-        case 22:
-        case 23:
-        case 24: {
+        case 17:
+        case 18: {
 
           /* Set dword to interesting value BE. */
 
@@ -2180,12 +2174,11 @@ havoc_stage:
 
         }
 
-        case 25:
-        case 26:
-        case 27:
-        case 28:
-        case 29:
-        case 30: {
+        case 19:
+        case 20:
+        case 21:
+        case 22:
+        case 23: {
 
           /* Randomly subtract from byte. */
 
@@ -2198,12 +2191,12 @@ havoc_stage:
 
         }
 
-        case 31:
-        case 32:
-        case 33:
-        case 34:
-        case 35:
-        case 36: {
+        case 24:
+        case 25:
+        case 26:
+        case 27:
+        case 28:
+        case 29: {
 
           /* Randomly add to byte. */
 
@@ -2216,9 +2209,9 @@ havoc_stage:
 
         }
 
-        case 37:
-        case 38:
-        case 39: {
+        case 30:
+        case 31:
+        case 32: {
 
           /* Randomly subtract from word */
           if (temp_len < 2) { break; }
@@ -2234,9 +2227,9 @@ havoc_stage:
 
         }
 
-        case 40:
-        case 41:
-        case 42: {
+        case 33:
+        case 34:
+        case 35: {
 
           /* Randomly subtract from word BE */
           if (temp_len < 2) { break; }
@@ -2256,9 +2249,9 @@ havoc_stage:
 
         }
 
-        case 43:
-        case 44:
-        case 45: {
+        case 36:
+        case 37:
+        case 38: {
 
           if (temp_len < 2) { break; }
 
@@ -2273,9 +2266,9 @@ havoc_stage:
 
         }
 
-        case 46:
-        case 47:
-        case 48: {
+        case 39:
+        case 40:
+        case 41: {
 
           /* Randomly add to word BE. */
 
@@ -2296,9 +2289,9 @@ havoc_stage:
 
         }
 
-        case 49:
-        case 50:
-        case 51: {
+        case 42:
+        case 43:
+        case 44: {
 
           /* Randomly subtract from dword */
           if (temp_len < 4) { break; }
@@ -2314,9 +2307,9 @@ havoc_stage:
 
         }
 
-        case 52:
-        case 53:
-        case 54: {
+        case 45:
+        case 46:
+        case 47: {
 
           /* Randomly subtract from dword BE. */
           if (temp_len < 4) { break; }
@@ -2336,9 +2329,9 @@ havoc_stage:
 
         }
 
-        case 55:
-        case 56:
-        case 57: {
+        case 48:
+        case 49:
+        case 50: {
 
           /* Randomly add to dword. */
 
@@ -2355,9 +2348,9 @@ havoc_stage:
 
         }
 
-        case 58:
-        case 59:
-        case 60: {
+        case 51:
+        case 52:
+        case 53: {
 
           /* Randomly add to dword BE. */
 
@@ -2378,12 +2371,16 @@ havoc_stage:
 
         }
 
+        case 54:
+        case 55:
+        case 56:
+        case 57:
+        case 58:
+        case 59:
+        case 60:
         case 61:
         case 62:
-        case 63:
-        case 64:
-        case 65:
-        case 66: {
+        case 63: {
 
           /* Just set a random byte to a random value. Because,
              why not. We use XOR with 1-255 to eliminate the
@@ -2398,17 +2395,14 @@ havoc_stage:
 
         }
 
+        case 64:
+        case 65:
+        case 66:
         case 67:
         case 68:
         case 69:
         case 70:
-        case 71:
-        case 72:
-        case 73:
-        case 74:
-        case 75:
-        case 76:
-        case 77: {
+        case 71: {
 
           /* Delete bytes. We're making this a bit more likely
              than insertion (the next option) in hopes of keeping
@@ -2438,13 +2432,14 @@ havoc_stage:
 
         }
 
+        case 72:
+        case 73:
+        case 74:
+        case 75:
+        case 76:
+        case 77:
         case 78:
         case 79:
-        case 80:
-        case 81:
-        case 82:
-        case 83:
-        case 84:
 
           if (temp_len + HAVOC_BLK_XL < MAX_FILE) {
 
@@ -2486,8 +2481,8 @@ havoc_stage:
 
           break;
 
-        case 85:
-        case 86:
+        case 80:
+        case 81:
 
           if (temp_len + HAVOC_BLK_XL < MAX_FILE) {
 
@@ -2529,12 +2524,11 @@ havoc_stage:
 
           break;
 
-        case 87:
-        case 88:
-        case 89:
-        case 90:
-        case 91:
-        case 92: {
+        case 82:
+        case 83:
+        case 84:
+        case 85:
+        case 86: {
 
           /* Overwrite bytes with a randomly selected chunk. */
 
@@ -2559,7 +2553,8 @@ havoc_stage:
 
         }
 
-        case 93: {
+        case 87:
+        case 88: {
 
           /* Overwrite bytes with a randomly selected chunk (75%) or fixed
              bytes (25%). */
@@ -2585,7 +2580,7 @@ havoc_stage:
 
         default:
 
-          r -= 94;
+          r -= 89;
           if (afl->extras_cnt) {
 
             if (r < 4) {
@@ -2644,7 +2639,7 @@ havoc_stage:
 
           if (afl->a_extras_cnt) {
 
-            if (r < 2) {
+            if (r < 1) {
 
               u32 use_a_extra = rand_below(afl, afl->a_extras_cnt);
               u32 a_extra_len = afl->a_extras[use_a_extra].len;
@@ -2662,7 +2657,7 @@ havoc_stage:
 
               break;
 
-            } else if (r < 4) {
+            } else if (r < 2) {
 
               u32 use_a_extra = rand_below(afl, afl->a_extras_cnt);
               u32 a_extra_len = afl->a_extras[use_a_extra].len;
