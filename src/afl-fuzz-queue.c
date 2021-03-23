@@ -249,7 +249,7 @@ void mark_as_det_done(afl_state_t *afl, struct queue_entry *q) {
   snprintf(fn, PATH_MAX, "%s/queue/.state/deterministic_done/%s", afl->out_dir,
            strrchr(q->fname, '/') + 1);
 
-  fd = open(fn, O_WRONLY | O_CREAT | O_EXCL, 0600);
+  fd = open(fn, O_WRONLY | O_CREAT | O_EXCL, DEFAULT_PERMISSION);
   if (fd < 0) { PFATAL("Unable to create '%s'", fn); }
   close(fd);
 
@@ -272,7 +272,7 @@ void mark_as_variable(afl_state_t *afl, struct queue_entry *q) {
 
   if (symlink(ldest, fn)) {
 
-    s32 fd = open(fn, O_WRONLY | O_CREAT | O_EXCL, 0600);
+    s32 fd = open(fn, O_WRONLY | O_CREAT | O_EXCL, DEFAULT_PERMISSION);
     if (fd < 0) { PFATAL("Unable to create '%s'", fn); }
     close(fd);
 
@@ -300,7 +300,7 @@ void mark_as_redundant(afl_state_t *afl, struct queue_entry *q, u8 state) {
 
     s32 fd;
 
-    fd = open(fn, O_WRONLY | O_CREAT | O_EXCL, 0600);
+    fd = open(fn, O_WRONLY | O_CREAT | O_EXCL, DEFAULT_PERMISSION);
     if (fd < 0) { PFATAL("Unable to create '%s'", fn); }
     close(fd);
 
@@ -325,7 +325,7 @@ static u8 check_if_text(afl_state_t *afl, struct queue_entry *q) {
 
   if (len >= MAX_FILE) len = MAX_FILE - 1;
   if ((fd = open(q->fname, O_RDONLY)) < 0) return 0;
-  buf = afl_realloc(AFL_BUF_PARAM(in_scratch), len);
+  buf = afl_realloc(AFL_BUF_PARAM(in_scratch), len + 1);
   comp = read(fd, buf, len);
   close(fd);
   if (comp != (ssize_t)len) return 0;

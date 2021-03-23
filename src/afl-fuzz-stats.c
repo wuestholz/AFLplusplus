@@ -391,10 +391,11 @@ void maybe_update_plot_file(afl_state_t *afl, u32 t_bytes, double bitmap_cvg,
   fprintf(afl->fsrv.plot_file,
           "%llu, %llu, %u, %u, %u, %u, %0.02f%%, %llu, %llu, %u, %0.02f, %llu, "
           "%u\n",
-          get_cur_time() / 1000, afl->queue_cycle - 1, afl->current_entry,
-          afl->queued_paths, afl->pending_not_fuzzed, afl->pending_favored,
-          bitmap_cvg, afl->unique_crashes, afl->unique_hangs, afl->max_depth,
-          eps, afl->plot_prev_ed, t_bytes);                /* ignore errors */
+          (afl->prev_run_time + get_cur_time() - afl->start_time),
+          afl->queue_cycle - 1, afl->current_entry, afl->queued_paths,
+          afl->pending_not_fuzzed, afl->pending_favored, bitmap_cvg,
+          afl->unique_crashes, afl->unique_hangs, afl->max_depth, eps,
+          afl->plot_prev_ed, t_bytes);                     /* ignore errors */
 
   fflush(afl->fsrv.plot_file);
 
@@ -645,6 +646,13 @@ void show_stats(afl_state_t *afl) {
 #define SP10 SP5 SP5
 #define SP20 SP10 SP10
 
+  /* Since `total_crashes` does not get reloaded from disk on restart,
+    it indicates if we found crashes this round already -> paint red.
+    If it's 0, but `unique_crashes` is set from a past run, paint in yellow. */
+  char *crash_color = afl->total_crashes    ? cLRD
+                      : afl->unique_crashes ? cYEL
+                                            : cRST;
+
   /* Lord, forgive me this. */
 
   SAYF(SET_G1 bSTG bLT bH bSTOP                         cCYA
@@ -732,7 +740,7 @@ void show_stats(afl_state_t *afl) {
   u_stringify_time_diff(time_tmp, cur_ms, afl->last_crash_time);
   SAYF(bV bSTOP " last uniq crash : " cRST "%-33s " bSTG bV bSTOP
                 " uniq crashes : %s%-6s" bSTG               bV "\n",
-       time_tmp, afl->unique_crashes ? cLRD : cRST, tmp);
+       time_tmp, crash_color, tmp);
 
   sprintf(tmp, "%s%s", u_stringify_int(IB(0), afl->unique_hangs),
           (afl->unique_hangs >= KEEP_UNIQUE_HANG) ? "+" : "");
@@ -815,20 +823,13 @@ void show_stats(afl_state_t *afl) {
 
     SAYF(bV bSTOP " total execs : " cRST "%-20s " bSTG bV bSTOP
                   "   new crashes : %s%-22s" bSTG         bV "\n",
-         u_stringify_int(IB(0), afl->fsrv.total_execs),
-         afl->unique_crashes ? cLRD : cRST, tmp);
+         u_stringify_int(IB(0), afl->fsrv.total_execs), crash_color, tmp);
 
   } else {
 
     SAYF(bV bSTOP " total execs : " cRST "%-20s " bSTG bV bSTOP
                   " total crashes : %s%-22s" bSTG         bV "\n",
-         u_stringify_int(IB(0), afl->fsrv.total_execs),
-         // New crashes this round -> Red, restored crashes -> yellow, else
-         // white.
-         afl->total_crashes    ? cLRD
-         : afl->unique_crashes ? cYEL
-                               : cRST,
-         tmp);
+         u_stringify_int(IB(0), afl->fsrv.total_execs), crash_color, tmp);
 
   }
 
