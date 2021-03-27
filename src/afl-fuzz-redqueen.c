@@ -2453,6 +2453,158 @@ u8 input_to_state_stage(afl_state_t *afl, u8 *orig_buf, u8 *buf, u32 len) {
       fprintf(stderr, "TAINT FAILED\n");
 #endif
       afl->queue_cur->colorized = CMPLOG_LVL_MAX;
+
+      // collect cmplog entries and add them to the dictionary instead of
+      // inserting them.
+      if (unlikely(!afl->orig_cmp_map)) {
+
+        afl->orig_cmp_map = ck_alloc_nozero(sizeof(struct cmp_map));
+
+      }
+
+      if (unlikely(!afl->backup_cmp_map)) {
+
+        afl->backup_cmp_map = ck_alloc_nozero(sizeof(struct cmp_map));
+
+      }
+
+      memset(afl->shm.cmp_map, 0, sizeof(struct cmp_map));
+      if (unlikely(common_fuzz_cmplog_stuff(afl, orig_buf, len))) { return 1; }
+      memcpy(afl->orig_cmp_map, afl->shm.cmp_map, sizeof(struct cmp_map));
+
+      memset(afl->shm.cmp_map, 0, sizeof(struct cmp_map));
+      if (unlikely(common_fuzz_cmplog_stuff(afl, orig_buf, len))) { return 1; }
+      memcpy(afl->backup_cmp_map, afl->shm.cmp_map, sizeof(struct cmp_map));
+
+      memset(afl->shm.cmp_map, 0, sizeof(struct cmp_map));
+      if (unlikely(common_fuzz_cmplog_stuff(afl, buf, len))) { return 1; }
+
+#if defined(_DEBUG) || defined(CMPLOG_INTROSPECTION)
+      u32 prev_auto_cnt = afl->a_extras_cnt;
+#endif
+      u32 ilen, k, l;
+      for (k = 0; k < CMP_MAP_W; ++k) {
+
+        u32 hits = afl->orig_cmp_map->headers[k].hits;
+        if (likely(!hits || afl->pass_stats[k].faileds >= CMPLOG_FAIL_MAX ||
+                   afl->pass_stats[k].total >= CMPLOG_FAIL_MAX)) {
+
+          continue;
+
+        }
+
+        if (afl->orig_cmp_map->headers[k].shape !=
+            afl->backup_cmp_map->headers[k].shape) {
+
+          continue;
+
+        }
+
+        if (afl->shm.cmp_map->headers[k].shape <
+            afl->orig_cmp_map->headers[k].shape) {
+
+          ilen = afl->shm.cmp_map->headers[k].shape;
+
+        } else {
+
+          ilen = afl->orig_cmp_map->headers[k].shape;
+
+        }
+
+        if (++ilen < 2) { continue; }
+
+        if (afl->orig_cmp_map->headers[k].type == CMP_TYPE_INS) {
+
+          if (hits > CMP_MAP_H) { hits = CMP_MAP_H; }
+          if (ilen > 16) { ilen = 16; }
+
+        } else {
+
+          if (hits > CMP_MAP_RTN_H) { hits = CMP_MAP_RTN_H; }
+
+        }
+
+        for (l = 0; l < hits; ++l) {
+
+          if (afl->orig_cmp_map->headers[k].type == CMP_TYPE_INS) {
+
+            struct cmp_operands *orig = &afl->orig_cmp_map->log[k][l];
+            struct cmp_operands *backup = &afl->backup_cmp_map->log[k][l];
+            struct cmp_operands *new = &afl->shm.cmp_map->log[k][l];
+
+            if (orig->v0 == backup->v0 && orig->v0 != orig->v1 &&
+                orig->v0 != new->v0 && orig->v1 == new->v1) {
+
+              try_to_add_to_dict(afl, new->v1, ilen);
+
+            } else if (orig->v1 == backup->v1 && orig->v1 != orig->v0 &&
+
+                       orig->v1 != new->v1 && orig->v0 == new->v0) {
+
+              try_to_add_to_dict(afl, new->v0, ilen);
+
+            }
+
+          } else {
+
+            struct cmpfn_operands *orig =
+                &((struct cmpfn_operands *)afl->shm.cmp_map->log[k])[l];
+            struct cmpfn_operands *backup =
+                &((struct cmpfn_operands *)afl->backup_cmp_map->log[k])[l];
+            struct cmpfn_operands *new =
+                &((struct cmpfn_operands *)afl->shm.cmp_map->log[k])[l];
+
+            if (memcmp(orig->v0, backup->v0, ilen) == 0 &&
+                memcmp(orig->v0, orig->v1, ilen) != 0 &&
+                memcmp(orig->v0, new->v0, ilen) != 0 &&
+                memcmp(orig->v1, new->v1, ilen) == 0) {
+
+              maybe_add_auto(afl, new->v1, ilen);
+
+            } else if (memcmp(orig->v1, backup->v1, ilen) == 0 &&
+
+                       memcmp(orig->v1, orig->v0, ilen) != 0 &&
+                       memcmp(orig->v1, new->v1, ilen) != 0 &&
+                       memcmp(orig->v0, new->v0, ilen) == 0) {
+
+              maybe_add_auto(afl, new->v0, ilen);
+
+            }
+
+          }
+
+        }
+
+      }
+
+#if defined(_DEBUG) || defined(CMPLOG_INTROSPECTION)
+      FILE *f = stderr;
+  #ifndef _DEBUG
+      if (afl->not_on_tty) {
+
+        char fn[4096];
+        snprintf(fn, sizeof(fn), "%s/introspection_cmplog.txt", afl->out_dir);
+        f = fopen(fn, "a");
+
+      }
+
+  #endif
+
+      if (f) {
+
+        fprintf(f,
+                "FailCmplog: fname=%s len=%u auto_extra_before=%u "
+                "auto_extra_after=%u\n",
+                afl->queue_cur->fname, len, prev_auto_cnt, afl->a_extras_cnt);
+
+  #ifndef _DEBUG
+        if (afl->not_on_tty) { fclose(f); }
+  #endif
+
+      }
+
+#endif
+
       return 0;
 
     }
