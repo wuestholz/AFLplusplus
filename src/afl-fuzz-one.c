@@ -2002,7 +2002,7 @@ havoc_stage:
 
   u32 r_max, r;
 
-  r_max = (MAX_HAVOC_ENTRY + 1) + (afl->extras_cnt ? 4 : 0) +
+  r_max = (MAX_HAVOC_ENTRY + 3 + 1) + (afl->extras_cnt ? 4 : 0) +
           (afl->a_extras_cnt ? 4 : 0);
 
   if (unlikely(afl->expand_havoc && afl->ready_for_splicing_count > 1)) {
@@ -2525,9 +2525,172 @@ havoc_stage:
 
         }
 
+        case MAX_HAVOC_ENTRY + 1:
+        case MAX_HAVOC_ENTRY + 2: {
+
+          /* Search for a number in ascii from a random offset and change it */
+
+          u32 found = 0, off = rand_below(afl, temp_len);
+
+          // find the start of a number
+          while (likely(!found && off < temp_len)) {
+
+            switch (out_buf[off]) {
+
+              case '0' ... '9':
+                found = 1;
+                break;
+              default:
+                ++off;
+
+            }
+
+          }
+
+          if (likely(found)) {
+
+            u32  off2 = off, found2 = 0;
+            u64  val = 0;
+            char buf[24];
+
+            // find the end of a number
+            while (likely(!found2 && off2 < temp_len)) {
+
+              switch (out_buf[off]) {
+
+                case '0' ... '9':
+                  ++off2;
+                  val += 10;
+                  val += (out_buf[off] - '0');
+                  break;
+                default:
+                  found = 1;
+
+              }
+
+            }
+
+            // strategy for changing the number
+            switch (rand_below(afl, 8)) {
+
+              case 0:
+                ++val;
+                break;
+              case 1:
+                --val;
+                break;
+              case 2:
+                val = (val << 1);
+                break;
+              case 3:
+                val = (val >> 1);
+                break;
+              case 4:
+                val = rand_next(afl);
+                break;
+              case 5:
+                val += (2 + rand_below(afl, 257));
+                break;
+              case 6:
+                val -= (2 + rand_below(afl, 257));
+                break;
+              case 7:
+                val = ~(val);
+                break;
+
+            }
+
+            sprintf(buf, "%lld", val);
+            u32 ilen = off2 - off, olen = strlen(buf), opt = rand_below(afl, 2);
+
+            if (opt == 1) {  // replace number
+
+              u8 *new_buf = afl_realloc(AFL_BUF_PARAM(out_scratch), off + olen);
+              if (unlikely(!new_buf)) { PFATAL("alloc"); }
+              memcpy(new_buf, out_buf, off);
+              memcpy(new_buf + off, buf, olen);
+              memcpy(new_buf + off + olen, out_buf + off2, temp_len - off2);
+              out_buf = new_buf;
+              afl_swap_bufs(AFL_BUF_PARAM(out), AFL_BUF_PARAM(out_scratch));
+              temp_len += (olen - ilen);
+
+            } else {  // overwrite number
+
+              if (unlikely(temp_len < off + olen)) {
+
+                u8 *new_buf =
+                    afl_realloc(AFL_BUF_PARAM(out_scratch), off + olen);
+                if (unlikely(!new_buf)) { PFATAL("alloc"); }
+                out_buf = new_buf;
+                afl_swap_bufs(AFL_BUF_PARAM(out), AFL_BUF_PARAM(out_scratch));
+                temp_len += (olen - ilen);
+
+              }
+
+              memcpy(out_buf + off, buf, olen);
+
+            }
+
+#ifdef INTROSPECTION
+            snprintf(afl->m_tmp, sizeof(afl->m_tmp), " NUMCHANGE-%u-%u", off,
+                     olen);
+            strcat(afl->mutation, afl->m_tmp);
+#endif
+
+          }
+
+          break;
+
+        }
+
+        case MAX_HAVOC_ENTRY + 3: {
+
+          /* Insert or overwrite a number in ascii at a random offset */
+
+          u32  off = rand_below(afl, temp_len), strat = rand_below(afl, 4);
+          char buf[24];
+          sprintf(buf, "%lld", rand_next(afl));
+          u32 olen = strlen(buf);
+
+          if (!strat) {  // insert number
+
+            u8 *new_buf = afl_realloc(AFL_BUF_PARAM(out_scratch), off + olen);
+            if (unlikely(!new_buf)) { PFATAL("alloc"); }
+            memcpy(new_buf, out_buf, off);
+            memcpy(new_buf + off, buf, olen);
+            memcpy(new_buf + off + olen, out_buf + olen, temp_len - off);
+            out_buf = new_buf;
+            afl_swap_bufs(AFL_BUF_PARAM(out), AFL_BUF_PARAM(out_scratch));
+            temp_len += olen;
+
+          } else {  // overwrite with number
+
+            if (unlikely(temp_len < off + olen)) {
+
+              u8 *new_buf = afl_realloc(AFL_BUF_PARAM(out_scratch), off + olen);
+              if (unlikely(!new_buf)) { PFATAL("alloc"); }
+              out_buf = new_buf;
+              afl_swap_bufs(AFL_BUF_PARAM(out), AFL_BUF_PARAM(out_scratch));
+              temp_len = off + olen;
+
+            }
+
+            memcpy(out_buf + off, buf, olen);
+
+          }
+
+#ifdef INTROSPECTION
+          snprintf(afl->m_tmp, sizeof(afl->m_tmp), " NUMINSERT-%u-%u", off,
+                   olen);
+          strcat(afl->mutation, afl->m_tmp);
+#endif
+          break;
+
+        }
+
         default:
 
-          r -= (MAX_HAVOC_ENTRY + 1);
+          r -= (MAX_HAVOC_ENTRY + 4);
 
           if (afl->extras_cnt) {
 
