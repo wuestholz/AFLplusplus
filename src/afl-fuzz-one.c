@@ -2549,22 +2549,21 @@ havoc_stage:
 
           if (likely(found)) {
 
-            u32  off2 = off, found2 = 0;
-            u64  val = 0;
+            u64  val = out_buf[off] - '0';
+            u32  off2 = off + 1, found2 = 0;
             char buf[24];
 
             // find the end of a number
             while (likely(!found2 && off2 < temp_len)) {
 
-              switch (out_buf[off]) {
+              switch (out_buf[off2]) {
 
                 case '0' ... '9':
-                  ++off2;
-                  val += 10;
-                  val += (out_buf[off] - '0');
+                  val *= 10;
+                  val += (out_buf[off2++] - '0');
                   break;
                 default:
-                  found = 1;
+                  found2 = 1;
 
               }
 
@@ -2623,7 +2622,7 @@ havoc_stage:
                 if (unlikely(!new_buf)) { PFATAL("alloc"); }
                 out_buf = new_buf;
                 afl_swap_bufs(AFL_BUF_PARAM(out), AFL_BUF_PARAM(out_scratch));
-                temp_len += (olen - ilen);
+                temp_len = off + olen;
 
               }
 
@@ -2632,8 +2631,8 @@ havoc_stage:
             }
 
 #ifdef INTROSPECTION
-            snprintf(afl->m_tmp, sizeof(afl->m_tmp), " NUMCHANGE-%u-%u", off,
-                     olen);
+            snprintf(afl->m_tmp, sizeof(afl->m_tmp), " NUMCHANGE-%s-%u-%u",
+                     opt ? "REPLACE" : "OVERWRITE", off, olen);
             strcat(afl->mutation, afl->m_tmp);
 #endif
 
@@ -2658,7 +2657,7 @@ havoc_stage:
             if (unlikely(!new_buf)) { PFATAL("alloc"); }
             memcpy(new_buf, out_buf, off);
             memcpy(new_buf + off, buf, olen);
-            memcpy(new_buf + off + olen, out_buf + olen, temp_len - off);
+            memcpy(new_buf + off + olen, out_buf + off, temp_len - off);
             out_buf = new_buf;
             afl_swap_bufs(AFL_BUF_PARAM(out), AFL_BUF_PARAM(out_scratch));
             temp_len += olen;
@@ -2680,8 +2679,8 @@ havoc_stage:
           }
 
 #ifdef INTROSPECTION
-          snprintf(afl->m_tmp, sizeof(afl->m_tmp), " NUMINSERT-%u-%u", off,
-                   olen);
+          snprintf(afl->m_tmp, sizeof(afl->m_tmp), " NUM-%s-%u-%u",
+                   !strat ? "INSERT" : "OVERWRITE", off, olen);
           strcat(afl->mutation, afl->m_tmp);
 #endif
           break;
