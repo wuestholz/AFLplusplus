@@ -665,13 +665,7 @@ int main(int argc, char **argv_orig, char **envp) {
 
       case 'x':                                               /* dictionary */
 
-        if (extras_dir_cnt >= 4) {
-
-          FATAL("More than four -x options are not supported");
-
-        }
-
-        extras_dir[extras_dir_cnt++] = optarg;
+        WARNF("TEST BRANCH - NO DICTIONARY SUPPORT!!!");
         break;
 
       case 't': {                                                /* timeout */
