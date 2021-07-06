@@ -113,7 +113,7 @@ void bind_to_free_cpu(afl_state_t *afl) {
   u8  lockfile[PATH_MAX] = "";
   s32 i;
 
-  if (afl->afl_env.afl_no_affinity) {
+  if (afl->afl_env.afl_no_affinity && !afl->afl_env.afl_try_affinity) {
 
     if (afl->cpu_to_bind != -1) {
 
@@ -130,10 +130,21 @@ void bind_to_free_cpu(afl_state_t *afl) {
 
     if (!bind_cpu(afl, afl->cpu_to_bind)) {
 
-      FATAL(
-          "Could not bind to requested CPU %d! Make sure you passed a valid "
-          "-b.",
-          afl->cpu_to_bind);
+      if (afl->afl_env.afl_try_affinity) {
+
+        WARNF(
+            "Could not bind to requested CPU %d! Make sure you passed a valid "
+            "-b.",
+            afl->cpu_to_bind);
+
+      } else {
+
+        FATAL(
+            "Could not bind to requested CPU %d! Make sure you passed a valid "
+            "-b.",
+            afl->cpu_to_bind);
+
+      }
 
     }
 
@@ -420,11 +431,14 @@ void bind_to_free_cpu(afl_state_t *afl) {
          "Uh-oh, looks like all %d CPU cores on your system are allocated to\n"
          "    other instances of afl-fuzz (or similar CPU-locked tasks). "
          "Starting\n"
-         "    another fuzzer on this machine is probably a bad plan, but if "
-         "you are\n"
-         "    absolutely sure, you can set AFL_NO_AFFINITY and try again.\n",
-         afl->cpu_core_count);
-    FATAL("No more free CPU cores");
+         "    another fuzzer on this machine is probably a bad plan.\n"
+         "%s",
+         afl->cpu_core_count,
+         afl->afl_env.afl_try_affinity ? ""
+                                       : "    If you are sure, you can set "
+                                         "AFL_NO_AFFINITY and try again.\n");
+
+    if (!afl->afl_env.afl_try_affinity) { FATAL("No more free CPU cores"); }
 
   }
 
@@ -466,13 +480,22 @@ void read_foreign_testcases(afl_state_t *afl, int first) {
 
   for (iter = 0; iter < afl->foreign_sync_cnt; iter++) {
 
-    if (afl->foreign_syncs[iter].dir != NULL &&
-        afl->foreign_syncs[iter].dir[0] != 0) {
+    if (afl->foreign_syncs[iter].dir && afl->foreign_syncs[iter].dir[0]) {
 
       if (first) ACTF("Scanning '%s'...", afl->foreign_syncs[iter].dir);
       time_t mtime_max = 0;
-      u8 *   name = strrchr(afl->foreign_syncs[iter].dir, '/');
-      if (!name) { name = afl->foreign_syncs[iter].dir; }
+
+      u8 *name = strrchr(afl->foreign_syncs[iter].dir, '/');
+      if (!name) {
+
+        name = afl->foreign_syncs[iter].dir;
+
+      } else {
+
+        ++name;
+
+      }
+
       if (!strcmp(name, "queue") || !strcmp(name, "out") ||
           !strcmp(name, "default")) {
 
@@ -687,96 +710,103 @@ void read_testcases(afl_state_t *afl, u8 *directory) {
 
   }
 
-  for (i = 0; i < (u32)nl_cnt; ++i) {
+  if (nl_cnt) {
 
-    struct stat st;
+    i = nl_cnt;
+    do {
 
-    u8 dfn[PATH_MAX];
-    snprintf(dfn, PATH_MAX, "%s/.state/deterministic_done/%s", afl->in_dir,
-             nl[i]->d_name);
-    u8 *fn2 = alloc_printf("%s/%s", dir, nl[i]->d_name);
+      --i;
 
-    u8 passed_det = 0;
+      struct stat st;
+      u8          dfn[PATH_MAX];
+      snprintf(dfn, PATH_MAX, "%s/.state/deterministic_done/%s", afl->in_dir,
+               nl[i]->d_name);
+      u8 *fn2 = alloc_printf("%s/%s", dir, nl[i]->d_name);
 
-    if (lstat(fn2, &st) || access(fn2, R_OK)) {
+      u8 passed_det = 0;
 
-      PFATAL("Unable to access '%s'", fn2);
+      if (lstat(fn2, &st) || access(fn2, R_OK)) {
 
-    }
+        PFATAL("Unable to access '%s'", fn2);
 
-    /* obviously we want to skip "descending" into . and .. directories,
-       however it is a good idea to skip also directories that start with
-       a dot */
-    if (subdirs && S_ISDIR(st.st_mode) && nl[i]->d_name[0] != '.') {
+      }
 
-      free(nl[i]);                                           /* not tracked */
-      read_testcases(afl, fn2);
-      ck_free(fn2);
-      continue;
+      /* obviously we want to skip "descending" into . and .. directories,
+         however it is a good idea to skip also directories that start with
+         a dot */
+      if (subdirs && S_ISDIR(st.st_mode) && nl[i]->d_name[0] != '.') {
 
-    }
+        free(nl[i]);                                         /* not tracked */
+        read_testcases(afl, fn2);
+        ck_free(fn2);
+        continue;
 
-    free(nl[i]);
+      }
 
-    if (!S_ISREG(st.st_mode) || !st.st_size || strstr(fn2, "/README.txt")) {
+      free(nl[i]);
 
-      ck_free(fn2);
-      continue;
+      if (!S_ISREG(st.st_mode) || !st.st_size || strstr(fn2, "/README.txt")) {
 
-    }
+        ck_free(fn2);
+        continue;
 
-    if (st.st_size > MAX_FILE) {
+      }
 
-      WARNF("Test case '%s' is too big (%s, limit is %s), partial reading", fn2,
-            stringify_mem_size(val_buf[0], sizeof(val_buf[0]), st.st_size),
-            stringify_mem_size(val_buf[1], sizeof(val_buf[1]), MAX_FILE));
+      if (st.st_size > MAX_FILE) {
 
-    }
+        WARNF("Test case '%s' is too big (%s, limit is %s), partial reading",
+              fn2,
+              stringify_mem_size(val_buf[0], sizeof(val_buf[0]), st.st_size),
+              stringify_mem_size(val_buf[1], sizeof(val_buf[1]), MAX_FILE));
 
-    /* Check for metadata that indicates that deterministic fuzzing
-       is complete for this entry. We don't want to repeat deterministic
-       fuzzing when resuming aborted scans, because it would be pointless
-       and probably very time-consuming. */
+      }
 
-    if (!access(dfn, F_OK)) { passed_det = 1; }
+      /* Check for metadata that indicates that deterministic fuzzing
+         is complete for this entry. We don't want to repeat deterministic
+         fuzzing when resuming aborted scans, because it would be pointless
+         and probably very time-consuming. */
 
-    add_to_queue(afl, fn2, st.st_size >= MAX_FILE ? MAX_FILE : st.st_size,
-                 passed_det);
+      if (!access(dfn, F_OK)) { passed_det = 1; }
 
-    if (unlikely(afl->shm.cmplog_mode)) {
+      add_to_queue(afl, fn2, st.st_size >= MAX_FILE ? MAX_FILE : st.st_size,
+                   passed_det);
 
-      if (afl->cmplog_lvl == 1) {
+      if (unlikely(afl->shm.cmplog_mode)) {
 
-        if (!afl->cmplog_max_filesize ||
-            afl->cmplog_max_filesize < st.st_size) {
+        if (afl->cmplog_lvl == 1) {
 
-          afl->cmplog_max_filesize = st.st_size;
+          if (!afl->cmplog_max_filesize ||
+              afl->cmplog_max_filesize < st.st_size) {
 
-        }
+            afl->cmplog_max_filesize = st.st_size;
 
-      } else if (afl->cmplog_lvl == 2) {
+          }
 
-        if (!afl->cmplog_max_filesize ||
-            afl->cmplog_max_filesize > st.st_size) {
+        } else if (afl->cmplog_lvl == 2) {
 
-          afl->cmplog_max_filesize = st.st_size;
+          if (!afl->cmplog_max_filesize ||
+              afl->cmplog_max_filesize > st.st_size) {
+
+            afl->cmplog_max_filesize = st.st_size;
+
+          }
 
         }
 
       }
 
-    }
+      /*
+          if (unlikely(afl->schedule >= FAST && afl->schedule <= RARE)) {
 
-    /*
-        if (unlikely(afl->schedule >= FAST && afl->schedule <= RARE)) {
+            u64 cksum = hash64(afl->fsrv.trace_bits, afl->fsrv.map_size,
+         HASH_CONST); afl->queue_top->n_fuzz_entry = cksum % N_FUZZ_SIZE;
+            afl->n_fuzz[afl->queue_top->n_fuzz_entry] = 1;
 
-          u64 cksum = hash64(afl->fsrv.trace_bits, afl->fsrv.map_size,
-       HASH_CONST); afl->queue_top->n_fuzz_entry = cksum % N_FUZZ_SIZE;
-          afl->n_fuzz[afl->queue_top->n_fuzz_entry] = 1;
+          }
 
-        }
+      */
 
-    */
+    } while (i > 0);
 
   }
 
@@ -823,7 +853,6 @@ void perform_dry_run(afl_state_t *afl) {
 
   struct queue_entry *q;
   u32                 cal_failures = 0, idx;
-  u8 *                skip_crashes = afl->afl_env.afl_skip_crashes;
   u8 *                use_mem;
 
   for (idx = 0; idx < afl->queued_paths; idx++) {
@@ -881,7 +910,7 @@ void perform_dry_run(afl_state_t *afl) {
 
       case FSRV_RUN_TMOUT:
 
-        if (afl->timeout_given) {
+        if (afl->timeout_given && !afl->afl_env.afl_exit_on_seed_issues) {
 
           /* if we have a timeout but a timeout value was given then always
              skip. The '+' meaning has been changed! */
@@ -922,27 +951,6 @@ void perform_dry_run(afl_state_t *afl) {
       case FSRV_RUN_CRASH:
 
         if (afl->crash_mode) { break; }
-
-        if (skip_crashes) {
-
-          if (afl->fsrv.uses_crash_exitcode) {
-
-            WARNF(
-                "Test case results in a crash or AFL_CRASH_EXITCODE %d "
-                "(skipping)",
-                (int)(s8)afl->fsrv.crash_exitcode);
-
-          } else {
-
-            WARNF("Test case results in a crash (skipping)");
-
-          }
-
-          q->cal_failed = CAL_CHANCES;
-          ++cal_failures;
-          break;
-
-        }
 
         if (afl->fsrv.mem_limit) {
 
@@ -1036,20 +1044,24 @@ void perform_dry_run(afl_state_t *afl) {
 
         }
 
+        if (afl->afl_env.afl_exit_on_seed_issues) {
+
+          FATAL("As AFL_EXIT_ON_SEED_ISSUES is set, afl-fuzz exits.");
+
+        }
+
         /* Remove from fuzzing queue but keep for splicing */
 
-        struct queue_entry *p = afl->queue;
+        if (!q->was_fuzzed) {
 
-        if (!p->was_fuzzed) {
-
-          p->was_fuzzed = 1;
+          q->was_fuzzed = 1;
           --afl->pending_not_fuzzed;
           --afl->active_paths;
 
         }
 
-        p->disabled = 1;
-        p->perf_score = 0;
+        q->disabled = 1;
+        q->perf_score = 0;
 
         u32 i = 0;
         while (unlikely(i < afl->queued_paths && afl->queue_buf[i] &&
@@ -1113,14 +1125,12 @@ void perform_dry_run(afl_state_t *afl) {
 
     if (cal_failures == afl->queued_paths) {
 
-      FATAL("All test cases time out%s, giving up!",
-            skip_crashes ? " or crash" : "");
+      FATAL("All test cases time out or crash, giving up!");
 
     }
 
-    WARNF("Skipped %u test cases (%0.02f%%) due to timeouts%s.", cal_failures,
-          ((double)cal_failures) * 100 / afl->queued_paths,
-          skip_crashes ? " or crashes" : "");
+    WARNF("Skipped %u test cases (%0.02f%%) due to timeouts or crashes.",
+          cal_failures, ((double)cal_failures) * 100 / afl->queued_paths);
 
     if (cal_failures * 5 > afl->queued_paths) {
 
@@ -1288,9 +1298,13 @@ void pivot_inputs(afl_state_t *afl) {
 
       if (src_str && sscanf(src_str + 1, "%06u", &src_id) == 1) {
 
-        struct queue_entry *s = afl->queue_buf[src_id];
+        if (src_id < afl->queued_paths) {
 
-        if (s) { q->depth = s->depth + 1; }
+          struct queue_entry *s = afl->queue_buf[src_id];
+
+          if (s) { q->depth = s->depth + 1; }
+
+        }
 
         if (afl->max_depth < q->depth) { afl->max_depth = q->depth; }
 
@@ -2025,7 +2039,7 @@ void setup_dirs_fds(afl_state_t *afl) {
 
     fprintf(
         afl->fsrv.plot_file,
-        "# unix_time, cycles_done, cur_path, paths_total, "
+        "# relative_time, cycles_done, cur_path, paths_total, "
         "pending_total, pending_favs, map_size, unique_crashes, "
         "unique_hangs, max_depth, execs_per_sec, total_execs, edges_found\n");
 
@@ -2490,6 +2504,18 @@ void check_asan_opts(afl_state_t *afl) {
 
   }
 
+  x = get_afl_env("LSAN_OPTIONS");
+
+  if (x) {
+
+    if (!strstr(x, "symbolize=0")) {
+
+      FATAL("Custom LSAN_OPTIONS set without symbolize=0 - please fix!");
+
+    }
+
+  }
+
 }
 
 /* Handle stop signal (Ctrl-C, etc). */
@@ -2708,11 +2734,15 @@ void check_binary(afl_state_t *afl, u8 *fname) {
          "    When source code is not available, you may be able to leverage "
          "QEMU\n"
          "    mode support. Consult the README.md for tips on how to enable "
-         "this.\n"
+         "this.\n\n"
+
+         "    If your target is an instrumented binary (e.g. with zafl, "
+         "retrowrite,\n"
+         "    etc.) then set 'AFL_SKIP_BIN_CHECK=1'\n\n"
 
          "    (It is also possible to use afl-fuzz as a traditional, "
-         "non-instrumented fuzzer.\n"
-         "    For that, you can use the -n option - but expect much worse "
+         "non-instrumented\n"
+         "    fuzzer. For that use the -n option - but expect much worse "
          "results.)\n",
          doc_path);
 
@@ -2735,7 +2765,8 @@ void check_binary(afl_state_t *afl, u8 *fname) {
   }
 
   if (memmem(f_data, f_len, "__asan_init", 11) ||
-      memmem(f_data, f_len, "__msan_init", 11)) {
+      memmem(f_data, f_len, "__msan_init", 11) ||
+      memmem(f_data, f_len, "__lsan_init", 11)) {
 
     afl->fsrv.uses_asan = 1;
 
@@ -2754,6 +2785,14 @@ void check_binary(afl_state_t *afl, u8 *fname) {
   } else if (getenv("AFL_PERSISTENT")) {
 
     WARNF("AFL_PERSISTENT is no longer supported and may misbehave!");
+
+  } else if (getenv("AFL_FRIDA_PERSISTENT_ADDR")) {
+
+    OKF("FRIDA Persistent mode configuration options detected.");
+    setenv(PERSIST_ENV_VAR, "1", 1);
+    afl->persistent_mode = 1;
+
+    afl->shmem_testcase_mode = 1;
 
   }
 

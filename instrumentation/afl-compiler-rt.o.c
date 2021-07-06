@@ -34,8 +34,10 @@
 #include <errno.h>
 
 #include <sys/mman.h>
-#include <sys/syscall.h>
 #ifndef __HAIKU__
+  #include <sys/syscall.h>
+#endif
+#ifndef USEMMAP
   #include <sys/shm.h>
 #endif
 #include <sys/wait.h>
@@ -76,14 +78,20 @@
   #define MAP_INITIAL_SIZE MAP_SIZE
 #endif
 
-u8   __afl_area_initial[MAP_INITIAL_SIZE];
-u8 * __afl_area_ptr_dummy = __afl_area_initial;
-u8 * __afl_area_ptr = __afl_area_initial;
-u8 * __afl_area_ptr_backup = __afl_area_initial;
-u8 * __afl_dictionary;
-u8 * __afl_fuzz_ptr;
-u32  __afl_fuzz_len_dummy;
-u32 *__afl_fuzz_len = &__afl_fuzz_len_dummy;
+#if defined(__HAIKU__)
+extern ssize_t _kern_write(int fd, off_t pos, const void *buffer,
+                           size_t bufferSize);
+#endif  // HAIKU
+
+static u8  __afl_area_initial[MAP_INITIAL_SIZE];
+static u8 *__afl_area_ptr_dummy = __afl_area_initial;
+static u8 *__afl_area_ptr_backup = __afl_area_initial;
+
+u8 *       __afl_area_ptr = __afl_area_initial;
+u8 *       __afl_dictionary;
+u8 *       __afl_fuzz_ptr;
+static u32 __afl_fuzz_len_dummy;
+u32 *      __afl_fuzz_len = &__afl_fuzz_len_dummy;
 
 u32 __afl_final_loc;
 u32 __afl_map_size = MAP_SIZE;
@@ -91,20 +99,18 @@ u32 __afl_dictionary_len;
 u64 __afl_map_addr;
 
 // for the __AFL_COVERAGE_ON/__AFL_COVERAGE_OFF features to work:
-int __afl_selective_coverage __attribute__((weak));
-int __afl_selective_coverage_start_off __attribute__((weak));
-int __afl_selective_coverage_temp = 1;
+int        __afl_selective_coverage __attribute__((weak));
+int        __afl_selective_coverage_start_off __attribute__((weak));
+static int __afl_selective_coverage_temp = 1;
 
 #if defined(__ANDROID__) || defined(__HAIKU__)
 PREV_LOC_T __afl_prev_loc[NGRAM_SIZE_MAX];
 PREV_LOC_T __afl_prev_caller[CTX_MAX_K];
 u32        __afl_prev_ctx;
-u32        __afl_cmp_counter;
 #else
 __thread PREV_LOC_T __afl_prev_loc[NGRAM_SIZE_MAX];
 __thread PREV_LOC_T __afl_prev_caller[CTX_MAX_K];
 __thread u32        __afl_prev_ctx;
-__thread u32        __afl_cmp_counter;
 #endif
 
 int __afl_sharedmem_fuzzing __attribute__((weak));
@@ -142,7 +148,7 @@ static int __afl_dummy_fd[2] = {2, 2};
 
 /* ensure we kill the child on termination */
 
-void at_exit(int signal) {
+static void at_exit(int signal) {
 
   if (child_pid > 0) { kill(child_pid, SIGKILL); }
 
@@ -174,7 +180,7 @@ void __afl_trace(const u32 x) {
 
 /* Error reporting to forkserver controller */
 
-void send_forkserver_error(int error) {
+static void send_forkserver_error(int error) {
 
   u32 status;
   if (!error || error > 0xffff) return;
@@ -264,12 +270,6 @@ static void __afl_map_shm(void) {
   char *id_str = getenv(SHM_ENV_VAR);
 
   if (__afl_final_loc) {
-
-    if (__afl_final_loc % 64) {
-
-      __afl_final_loc = (((__afl_final_loc + 63) >> 6) << 6);
-
-    }
 
     __afl_map_size = __afl_final_loc;
 
@@ -617,10 +617,39 @@ static void __afl_unmap_shm(void) {
 #endif
 
     __afl_cmp_map = NULL;
+    __afl_cmp_map_backup = NULL;
 
   }
 
   __afl_already_initialized_shm = 0;
+
+}
+
+#define write_error(text) write_error_with_location(text, __FILE__, __LINE__)
+
+void write_error_with_location(char *text, char *filename, int linenumber) {
+
+  u8 *  o = getenv("__AFL_OUT_DIR");
+  char *e = strerror(errno);
+
+  if (o) {
+
+    char buf[4096];
+    snprintf(buf, sizeof(buf), "%s/error.txt", o);
+    FILE *f = fopen(buf, "a");
+
+    if (f) {
+
+      fprintf(f, "File %s, line %d: Error(%s): %s\n", filename, linenumber,
+              text, e);
+      fclose(f);
+
+    }
+
+  }
+
+  fprintf(stderr, "File %s, line %d: Error(%s): %s\n", filename, linenumber,
+          text, e);
 
 }
 
@@ -650,7 +679,12 @@ static void __afl_start_snapshots(void) {
 
   if (__afl_sharedmem_fuzzing || (__afl_dictionary_len && __afl_dictionary)) {
 
-    if (read(FORKSRV_FD, &was_killed, 4) != 4) { _exit(1); }
+    if (read(FORKSRV_FD, &was_killed, 4) != 4) {
+
+      write_error("read to afl-fuzz");
+      _exit(1);
+
+    }
 
     if (__afl_debug) {
 
@@ -719,7 +753,12 @@ static void __afl_start_snapshots(void) {
     } else {
 
       /* Wait for parent by reading from the pipe. Abort if read fails. */
-      if (read(FORKSRV_FD, &was_killed, 4) != 4) _exit(1);
+      if (read(FORKSRV_FD, &was_killed, 4) != 4) {
+
+        write_error("reading from afl-fuzz");
+        _exit(1);
+
+      }
 
     }
 
@@ -756,7 +795,12 @@ static void __afl_start_snapshots(void) {
     if (child_stopped && was_killed) {
 
       child_stopped = 0;
-      if (waitpid(child_pid, &status, 0) < 0) _exit(1);
+      if (waitpid(child_pid, &status, 0) < 0) {
+
+        write_error("child_stopped && was_killed");
+        _exit(1);  // TODO why exit?
+
+      }
 
     }
 
@@ -765,7 +809,12 @@ static void __afl_start_snapshots(void) {
       /* Once woken up, create a clone of our process. */
 
       child_pid = fork();
-      if (child_pid < 0) _exit(1);
+      if (child_pid < 0) {
+
+        write_error("fork");
+        _exit(1);
+
+      }
 
       /* In child process: close fds, resume execution. */
 
@@ -805,9 +854,19 @@ static void __afl_start_snapshots(void) {
 
     /* In parent process: write PID to pipe, then wait for child. */
 
-    if (write(FORKSRV_FD + 1, &child_pid, 4) != 4) _exit(1);
+    if (write(FORKSRV_FD + 1, &child_pid, 4) != 4) {
 
-    if (waitpid(child_pid, &status, WUNTRACED) < 0) _exit(1);
+      write_error("write to afl-fuzz");
+      _exit(1);
+
+    }
+
+    if (waitpid(child_pid, &status, WUNTRACED) < 0) {
+
+      write_error("waitpid");
+      _exit(1);
+
+    }
 
     /* In persistent mode, the child stops itself with SIGSTOP to indicate
        a successful run. In this case, we want to wake it up without forking
@@ -817,7 +876,12 @@ static void __afl_start_snapshots(void) {
 
     /* Relay wait status to pipe, then loop back. */
 
-    if (write(FORKSRV_FD + 1, &status, 4) != 4) _exit(1);
+    if (write(FORKSRV_FD + 1, &status, 4) != 4) {
+
+      write_error("writing to afl-fuzz");
+      _exit(1);
+
+    }
 
   }
 
@@ -950,7 +1014,12 @@ static void __afl_start_forkserver(void) {
 
     } else {
 
-      if (read(FORKSRV_FD, &was_killed, 4) != 4) _exit(1);
+      if (read(FORKSRV_FD, &was_killed, 4) != 4) {
+
+        // write_error("read from afl-fuzz");
+        _exit(1);
+
+      }
 
     }
 
@@ -987,7 +1056,12 @@ static void __afl_start_forkserver(void) {
     if (child_stopped && was_killed) {
 
       child_stopped = 0;
-      if (waitpid(child_pid, &status, 0) < 0) _exit(1);
+      if (waitpid(child_pid, &status, 0) < 0) {
+
+        write_error("child_stopped && was_killed");
+        _exit(1);
+
+      }
 
     }
 
@@ -996,7 +1070,12 @@ static void __afl_start_forkserver(void) {
       /* Once woken up, create a clone of our process. */
 
       child_pid = fork();
-      if (child_pid < 0) _exit(1);
+      if (child_pid < 0) {
+
+        write_error("fork");
+        _exit(1);
+
+      }
 
       /* In child process: close fds, resume execution. */
 
@@ -1025,10 +1104,19 @@ static void __afl_start_forkserver(void) {
 
     /* In parent process: write PID to pipe, then wait for child. */
 
-    if (write(FORKSRV_FD + 1, &child_pid, 4) != 4) _exit(1);
+    if (write(FORKSRV_FD + 1, &child_pid, 4) != 4) {
 
-    if (waitpid(child_pid, &status, is_persistent ? WUNTRACED : 0) < 0)
+      write_error("write to afl-fuzz");
       _exit(1);
+
+    }
+
+    if (waitpid(child_pid, &status, is_persistent ? WUNTRACED : 0) < 0) {
+
+      write_error("waitpid");
+      _exit(1);
+
+    }
 
     /* In persistent mode, the child stops itself with SIGSTOP to indicate
        a successful run. In this case, we want to wake it up without forking
@@ -1038,7 +1126,12 @@ static void __afl_start_forkserver(void) {
 
     /* Relay wait status to pipe, then loop back. */
 
-    if (write(FORKSRV_FD + 1, &status, 4) != 4) _exit(1);
+    if (write(FORKSRV_FD + 1, &status, 4) != 4) {
+
+      write_error("writing to afl-fuzz");
+      _exit(1);
+
+    }
 
   }
 
@@ -1139,6 +1232,18 @@ void __afl_manual_init(void) {
 /* Initialization of the forkserver - latest possible */
 
 __attribute__((constructor())) void __afl_auto_init(void) {
+
+#ifdef __ANDROID__
+  // Disable handlers in linker/debuggerd, check include/debuggerd/handler.h
+  signal(SIGABRT, SIG_DFL);
+  signal(SIGBUS, SIG_DFL);
+  signal(SIGFPE, SIG_DFL);
+  signal(SIGILL, SIG_DFL);
+  signal(SIGSEGV, SIG_DFL);
+  signal(SIGSTKFLT, SIG_DFL);
+  signal(SIGSYS, SIG_DFL);
+  signal(SIGTRAP, SIG_DFL);
+#endif
 
   if (getenv("AFL_DISABLE_LLVM_INSTRUMENTATION")) return;
 
@@ -1582,7 +1687,7 @@ void __cmplog_ins_hookN(uint128_t arg1, uint128_t arg2, uint8_t attr,
 
 void __cmplog_ins_hook16(uint128_t arg1, uint128_t arg2, uint8_t attr) {
 
-  if (unlikely(!__afl_cmp_map)) return;
+  if (likely(!__afl_cmp_map)) return;
 
   uintptr_t k = (uintptr_t)__builtin_return_address(0);
   k = (k >> 4) ^ (k << 8);
@@ -1651,7 +1756,7 @@ void __sanitizer_cov_trace_cmp4(uint32_t arg1, uint32_t arg2) {
 
 }
 
-void __sanitizer_cov_trace_cost_cmp4(uint32_t arg1, uint32_t arg2) {
+void __sanitizer_cov_trace_const_cmp4(uint32_t arg1, uint32_t arg2) {
 
   __cmplog_ins_hook4(arg1, arg2, 0);
 
@@ -1686,7 +1791,7 @@ void __sanitizer_cov_trace_const_cmp16(uint128_t arg1, uint128_t arg2) {
 
 void __sanitizer_cov_trace_switch(uint64_t val, uint64_t *cases) {
 
-  if (unlikely(!__afl_cmp_map)) return;
+  if (likely(!__afl_cmp_map)) return;
 
   for (uint64_t i = 0; i < cases[0]; i++) {
 
@@ -1738,7 +1843,11 @@ static int area_is_valid(void *ptr, size_t len) {
 
   if (unlikely(!ptr || __asan_region_is_poisoned(ptr, len))) { return 0; }
 
+#ifndef __HAIKU__
   long r = syscall(SYS_write, __afl_dummy_fd[1], ptr, len);
+#else
+  long r = _kern_write(__afl_dummy_fd[1], -1, ptr, len);
+#endif  // HAIKU
 
   if (r <= 0 || r > len) return 0;
 
@@ -1779,7 +1888,7 @@ void __cmplog_rtn_hook(u8 *ptr1, u8 *ptr2) {
     fprintf(stderr, "\n");
   */
 
-  if (unlikely(!__afl_cmp_map)) return;
+  if (likely(!__afl_cmp_map)) return;
   // fprintf(stderr, "RTN1 %p %p\n", ptr1, ptr2);
   int l1, l2;
   if ((l1 = area_is_valid(ptr1, 32)) <= 0 ||
@@ -1863,7 +1972,7 @@ static u8 *get_llvm_stdstring(u8 *string) {
 
 void __cmplog_rtn_gcc_stdstring_cstring(u8 *stdstring, u8 *cstring) {
 
-  if (unlikely(!__afl_cmp_map)) return;
+  if (likely(!__afl_cmp_map)) return;
   if (area_is_valid(stdstring, 32) <= 0 || area_is_valid(cstring, 32) <= 0)
     return;
 
@@ -1873,7 +1982,7 @@ void __cmplog_rtn_gcc_stdstring_cstring(u8 *stdstring, u8 *cstring) {
 
 void __cmplog_rtn_gcc_stdstring_stdstring(u8 *stdstring1, u8 *stdstring2) {
 
-  if (unlikely(!__afl_cmp_map)) return;
+  if (likely(!__afl_cmp_map)) return;
   if (area_is_valid(stdstring1, 32) <= 0 || area_is_valid(stdstring2, 32) <= 0)
     return;
 
@@ -1884,7 +1993,7 @@ void __cmplog_rtn_gcc_stdstring_stdstring(u8 *stdstring1, u8 *stdstring2) {
 
 void __cmplog_rtn_llvm_stdstring_cstring(u8 *stdstring, u8 *cstring) {
 
-  if (unlikely(!__afl_cmp_map)) return;
+  if (likely(!__afl_cmp_map)) return;
   if (area_is_valid(stdstring, 32) <= 0 || area_is_valid(cstring, 32) <= 0)
     return;
 
@@ -1894,7 +2003,7 @@ void __cmplog_rtn_llvm_stdstring_cstring(u8 *stdstring, u8 *cstring) {
 
 void __cmplog_rtn_llvm_stdstring_stdstring(u8 *stdstring1, u8 *stdstring2) {
 
-  if (unlikely(!__afl_cmp_map)) return;
+  if (likely(!__afl_cmp_map)) return;
   if (area_is_valid(stdstring1, 32) <= 0 || area_is_valid(stdstring2, 32) <= 0)
     return;
 
@@ -1928,7 +2037,7 @@ void __afl_coverage_on() {
   if (likely(__afl_selective_coverage && __afl_selective_coverage_temp)) {
 
     __afl_area_ptr = __afl_area_ptr_backup;
-    __afl_cmp_map = __afl_cmp_map_backup;
+    if (__afl_cmp_map_backup) { __afl_cmp_map = __afl_cmp_map_backup; }
 
   }
 
@@ -1968,4 +2077,6 @@ void __afl_coverage_interesting(u8 val, u32 id) {
   __afl_area_ptr[id] = val;
 
 }
+
+#undef write_error
 

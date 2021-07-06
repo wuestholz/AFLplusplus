@@ -26,7 +26,7 @@
 /* Version string: */
 
 // c = release, a = volatile github dev, e = experimental branch
-#define VERSION "++3.13a"
+#define VERSION "++3.14a"
 
 /******************************************************
  *                                                    *
@@ -154,7 +154,7 @@
    cases that show variable behavior): */
 
 #define CAL_CYCLES 8U
-#define CAL_CYCLES_LONG 40U
+#define CAL_CYCLES_LONG 20U
 
 /* Number of subsequent timeouts before abandoning an input file: */
 
@@ -163,7 +163,7 @@
 /* Maximum number of unique hangs or crashes to record: */
 
 #define KEEP_UNIQUE_HANG 500U
-#define KEEP_UNIQUE_CRASH 5000U
+#define KEEP_UNIQUE_CRASH 10000U
 
 /* Baseline number of random tweaks during a single 'havoc' stage: */
 
@@ -405,6 +405,10 @@
 /* Distinctive exit code used to indicate MSAN trip condition: */
 
 #define MSAN_ERROR 86
+
+/* Distinctive exit code used to indicate LSAN trip condition: */
+
+#define LSAN_ERROR 23
 
 /* Designated file descriptors for forkserver commands (the application will
    use FORKSRV_FD and FORKSRV_FD + 1): */

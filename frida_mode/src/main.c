@@ -1,3 +1,5 @@
+#include <errno.h>
+#include <fcntl.h>
 #include <unistd.h>
 #include <sys/types.h>
 
@@ -9,14 +11,25 @@
   #include <sys/personality.h>
 #endif
 
-#include "frida-gum.h"
+#include "frida-gumjs.h"
+
 #include "config.h"
 #include "debug.h"
 
-#include "interceptor.h"
+#include "entry.h"
 #include "instrument.h"
+#include "intercept.h"
+#include "js.h"
+#include "lib.h"
+#include "output.h"
+#include "persistent.h"
 #include "prefetch.h"
 #include "ranges.h"
+#include "stalker.h"
+#include "stats.h"
+#include "util.h"
+
+#define PROC_MAX 65536
 
 #ifdef __APPLE__
 extern mach_port_t mach_task_self();
@@ -30,31 +43,25 @@ extern int  __libc_start_main(int *(main)(int, char **, char **), int argc,
 
 typedef int *(*main_fn_t)(int argc, char **argv, char **envp);
 
-static main_fn_t      main_fn = NULL;
-static GumStalker *   stalker = NULL;
-static GumMemoryRange code_range = {0};
-
-extern void              __afl_manual_init();
-extern __thread uint64_t previous_pc;
-
-static int on_fork() {
-
-  prefetch_read(stalker);
-  return fork();
-
-}
+static main_fn_t main_fn = NULL;
 
 #ifdef __APPLE__
 static void on_main_os(int argc, char **argv, char **envp) {
+
+  UNUSED_PARAMETER(argc);
+  UNUSED_PARAMETER(argv);
+  UNUSED_PARAMETER(envp);
 
 }
 
 #else
 static void on_main_os(int argc, char **argv, char **envp) {
 
+  UNUSED_PARAMETER(argc);
   /* Personality doesn't affect the current process, it only takes effect on
    * evec */
   int persona = personality(ADDR_NO_RANDOMIZE);
+  if (persona == -1) { WARNF("Failed to set ADDR_NO_RANDOMIZE: %d", errno); }
   if ((persona & ADDR_NO_RANDOMIZE) == 0) { execvpe(argv[0], argv, envp); }
 
   GumInterceptor *interceptor = gum_interceptor_obtain();
@@ -68,39 +75,156 @@ static void on_main_os(int argc, char **argv, char **envp) {
 
 #endif
 
+static void embedded_init(void) {
+
+  static gboolean initialized = false;
+  if (!initialized) {
+
+    gum_init_embedded();
+    initialized = true;
+
+  }
+
+}
+
+static void afl_print_cmdline(void) {
+
+  char * buffer = g_malloc0(PROC_MAX);
+  gchar *fname = g_strdup_printf("/proc/%d/cmdline", getppid());
+  int    fd = open(fname, O_RDONLY);
+
+  if (fd < 0) {
+
+    WARNF("Failed to open /proc/self/cmdline, errno: (%d)", errno);
+    return;
+
+  }
+
+  ssize_t bytes_read = read(fd, buffer, PROC_MAX - 1);
+  if (bytes_read < 0) {
+
+    FATAL("Failed to read /proc/self/cmdline, errno: (%d)", errno);
+
+  }
+
+  int idx = 0;
+
+  for (ssize_t i = 0; i < bytes_read; i++) {
+
+    if (i == 0 || buffer[i - 1] == '\0') {
+
+      OKF("AFL - COMMANDLINE: argv[%d] = %s", idx++, &buffer[i]);
+
+    }
+
+  }
+
+  close(fd);
+  g_free(fname);
+  g_free(buffer);
+
+}
+
+static void afl_print_env(void) {
+
+  char * buffer = g_malloc0(PROC_MAX);
+  gchar *fname = g_strdup_printf("/proc/%d/environ", getppid());
+  int    fd = open(fname, O_RDONLY);
+
+  if (fd < 0) {
+
+    WARNF("Failed to open /proc/self/cmdline, errno: (%d)", errno);
+    return;
+
+  }
+
+  ssize_t bytes_read = read(fd, buffer, PROC_MAX - 1);
+  if (bytes_read < 0) {
+
+    FATAL("Failed to read /proc/self/cmdline, errno: (%d)", errno);
+
+  }
+
+  int idx = 0;
+
+  for (ssize_t i = 0; i < bytes_read; i++) {
+
+    if (i == 0 || buffer[i - 1] == '\0') {
+
+      OKF("AFL - ENVIRONMENT %3d: %s", idx++, &buffer[i]);
+
+    }
+
+  }
+
+  close(fd);
+  g_free(fname);
+  g_free(buffer);
+
+}
+
+__attribute__((visibility("default"))) void afl_frida_start(void) {
+
+  afl_print_cmdline();
+  afl_print_env();
+
+  /* Configure */
+  entry_config();
+  instrument_config();
+  js_config();
+  lib_config();
+  output_config();
+  persistent_config();
+  prefetch_config();
+  ranges_config();
+  stalker_config();
+  stats_config();
+
+  js_start();
+
+  /* Initialize */
+  output_init();
+
+  embedded_init();
+  entry_init();
+  instrument_init();
+  lib_init();
+  persistent_init();
+  prefetch_init();
+  stalker_init();
+  ranges_init();
+  stats_init();
+
+  /* Start */
+  stalker_start();
+  entry_start();
+
+}
+
 static int *on_main(int argc, char **argv, char **envp) {
 
   on_main_os(argc, argv, envp);
 
-  stalker = gum_stalker_new();
-  if (stalker == NULL) { FATAL("Failed to initialize stalker"); }
+  intercept_unhook_self();
 
-  gum_stalker_set_trust_threshold(stalker, 0);
+  afl_frida_start();
 
-  GumStalkerTransformer *transformer =
-      gum_stalker_transformer_make_from_callback(instr_basic_block, NULL, NULL);
-
-  instrument_init();
-  prefetch_init();
-  ranges_init(stalker);
-
-  intercept(fork, on_fork, stalker);
-
-  gum_stalker_follow_me(stalker, transformer, NULL);
-  gum_stalker_deactivate(stalker);
-
-  __afl_manual_init();
-
-  /* Child here */
-  previous_pc = 0;
-  prefetch_start(stalker);
-  main_fn(argc, argv, envp);
-  _exit(0);
+  return main_fn(argc, argv, envp);
 
 }
 
-#ifdef __APPLE__
-static void intercept_main() {
+#if defined(EMBEDDED)
+extern int *main(int argc, char **argv, char **envp);
+
+static void intercept_main(void) {
+
+  main_fn = main;
+  intercept_hook(main, on_main, NULL);
+
+}
+
+#elif defined(__APPLE__)
+static void intercept_main(void) {
 
   mach_port_t task = mach_task_self();
   OKF("Task Id: %u", task);
@@ -108,7 +232,7 @@ static void intercept_main() {
   OKF("Entry Point: 0x%016" G_GINT64_MODIFIER "x", entry);
   void *main = GSIZE_TO_POINTER(entry);
   main_fn = main;
-  intercept(main, on_main, NULL);
+  intercept_hook(main, on_main, NULL);
 
 }
 
@@ -119,29 +243,24 @@ static int on_libc_start_main(int *(main)(int, char **, char **), int argc,
                               void(*stack_end)) {
 
   main_fn = main;
-  intercept(main, on_main, NULL);
+  intercept_unhook_self();
+  intercept_hook(main, on_main, NULL);
   return __libc_start_main(main, argc, ubp_av, init, fini, rtld_fini,
                            stack_end);
 
 }
 
-static void intercept_main() {
+static void intercept_main(void) {
 
-  intercept(__libc_start_main, on_libc_start_main, NULL);
+  intercept_hook(__libc_start_main, on_libc_start_main, NULL);
 
 }
 
 #endif
 
-__attribute__((constructor)) static void init() {
+__attribute__((constructor)) static void init(void) {
 
-  gum_init_embedded();
-  if (!gum_stalker_is_supported()) {
-
-    gum_deinit_embedded();
-    FATAL("Failed to initialize embedded");
-
-  }
+  embedded_init();
 
   intercept_main();
 

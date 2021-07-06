@@ -2,9 +2,9 @@
 
   <img align="right" src="https://raw.githubusercontent.com/andreafioraldi/AFLplusplus-website/master/static/logo_256x256.png" alt="AFL++ Logo">
 
-  Release Version: [3.12c](https://github.com/AFLplusplus/AFLplusplus/releases)
+  Release Version: [3.13c](https://github.com/AFLplusplus/AFLplusplus/releases)
 
-  Github Version: 3.13a
+  Github Version: 3.14a
 
   Repository: [https://github.com/AFLplusplus/AFLplusplus](https://github.com/AFLplusplus/AFLplusplus)
 
@@ -25,11 +25,16 @@
   For comparisons use the fuzzbench `aflplusplus` setup, or use `afl-clang-fast`
   with `AFL_LLVM_CMPLOG=1`.
 
-## Major changes in afl++ 3.00 onwards:
+## Major behaviour changes in afl++ 3.00 onwards:
 
 With afl++ 3.13-3.20 we introduce frida_mode (-O) to have an alternative for
 binary-only fuzzing. It is slower than Qemu mode but works on MacOS, Android,
 iOS etc.
+
+With afl++ 3.14 we introduced the following changes from previous behaviours:
+  * afl-fuzz: deterministic fuzzing it not a default for -M main anymore
+  * afl-cmin/afl-showmap -i now descends into subdirectories (afl-cmin.bash
+    however does not)
 
 With afl++ 3.10 we introduced the following changes from previous behaviours:
   * The '+' feature of the '-t' option now means to  auto-calculate the timeout
@@ -38,7 +43,6 @@ With afl++ 3.10 we introduced the following changes from previous behaviours:
 
 With afl++ 3.00 we introduced changes that break some previous afl and afl++
 behaviours and defaults:
-
   * There are no llvm_mode and gcc_plugin subdirectories anymore and there is
     only one compiler: afl-cc. All previous compilers now symlink to this one.
     All instrumentation source code is now in the `instrumentation/` folder.
@@ -84,30 +88,32 @@ behaviours and defaults:
 
 ## Important features of afl++
 
-  afl++ supports llvm up to version 12, very fast binary fuzzing with QEMU 5.1
+  afl++ supports llvm from 3.8 up to version 12, very fast binary fuzzing with QEMU 5.1
   with laf-intel and redqueen, frida mode, unicorn mode, gcc plugin, full *BSD,
   Mac OS, Solaris and Android support and much, much, much more.
 
-  | Feature/Instrumentation  | afl-gcc | llvm      | gcc_plugin | frida_mode | qemu_mode        |unicorn_mode |
-  | -------------------------|:-------:|:---------:|:----------:|:----------:|:----------------:|:------------:|
-  | NeverZero                | x86[_64]|     x(1)  |     x      |            |         x        |       x      |
-  | Persistent Mode          |         |     x     |     x      |            | x86[_64]/arm[64] |       x      |
-  | LAF-Intel / CompCov      |         |     x     |            |            | x86[_64]/arm[64] | x86[_64]/arm |
-  | CmpLog                   |         |     x     |            |            | x86[_64]/arm[64] |              |
-  | Selective Instrumentation|         |     x     |     x      |     x      |         x        |              |
-  | Non-Colliding Coverage   |         |     x(4)  |            |            |        (x)(5)    |              |
-  | Ngram prev_loc Coverage  |         |     x(6)  |            |            |                  |              |
-  | Context Coverage         |         |     x(6)  |            |            |                  |              |
-  | Auto Dictionary          |         |     x(7)  |            |            |                  |              |
-  | Snapshot LKM Support     |         |     x(8)  |     x(8)   |            |        (x)(5)    |              |
+  | Feature/Instrumentation  | afl-gcc | llvm      | gcc_plugin | frida_mode       | qemu_mode        |unicorn_mode      |
+  | -------------------------|:-------:|:---------:|:----------:|:----------------:|:----------------:|:----------------:|
+  | Threadsafe counters      |         |     x(3)  |            |                  |                  |                  |
+  | NeverZero                | x86[_64]|     x(1)  |     x      |         x        |         x        |         x        |
+  | Persistent Mode          |         |     x     |     x      | x86[_64]/arm64   | x86[_64]/arm[64] |         x        |
+  | LAF-Intel / CompCov      |         |     x     |            |                  | x86[_64]/arm[64] | x86[_64]/arm[64] |
+  | CmpLog                   |         |     x     |            | x86[_64]/arm64   | x86[_64]/arm[64] |                  |
+  | Selective Instrumentation|         |     x     |     x      |         x        |         x        |                  |
+  | Non-Colliding Coverage   |         |     x(4)  |            |                  |        (x)(5)    |                  |
+  | Ngram prev_loc Coverage  |         |     x(6)  |            |                  |                  |                  |
+  | Context Coverage         |         |     x(6)  |            |                  |                  |                  |
+  | Auto Dictionary          |         |     x(7)  |            |                  |                  |                  |
+  | Snapshot LKM Support     |         |    (x)(8) |    (x)(8)  |                  |        (x)(5)    |                  |
+  | Shared Memory Testcases  |         |     x     |     x      | x86[_64]/arm64   |         x        |         x        |
 
-  1. default for LLVM >= 9.0, env var for older version due an efficiency bug in llvm <= 8
+  1. default for LLVM >= 9.0, env var for older version due an efficiency bug in previous llvm versions
   2. GCC creates non-performant code, hence it is disabled in gcc_plugin
-  3. (currently unassigned)
-  4. with pcguard mode and LTO mode for LLVM >= 11
+  3. with `AFL_LLVM_THREADSAFE_INST`, disables NeverZero
+  4. with pcguard mode and LTO mode for LLVM 11 and newer
   5. upcoming, development in the branch
-  6. not compatible with LTO instrumentation and needs at least LLVM >= 4.1
-  7. automatic in LTO mode with LLVM >= 11, an extra pass for all LLVM version that writes to a file to use with afl-fuzz' `-x`
+  6. not compatible with LTO instrumentation and needs at least LLVM v4.1
+  7. automatic in LTO mode with LLVM 11 and newer, an extra pass for all LLVM versions that write to a file to use with afl-fuzz' `-x`
   8. the snapshot LKM is currently unmaintained due to too many kernel changes coming too fast :-(
 
   Among others, the following features and patches have been integrated:
@@ -254,6 +260,7 @@ Here are some good writeups to show how to effectively use AFL++:
 If you are interested in fuzzing structured data (where you define what the
 structure is), these links have you covered:
  * Superion for afl++: [https://github.com/adrian-rt/superion-mutator](https://github.com/adrian-rt/superion-mutator)
+ * libprotobuf for afl++: [https://github.com/P1umer/AFLplusplus-protobuf-mutator](https://github.com/P1umer/AFLplusplus-protobuf-mutator)
  * libprotobuf raw: [https://github.com/bruce30262/libprotobuf-mutator_fuzzing_learning/tree/master/4_libprotobuf_aflpp_custom_mutator](https://github.com/bruce30262/libprotobuf-mutator_fuzzing_learning/tree/master/4_libprotobuf_aflpp_custom_mutator)
  * libprotobuf for old afl++ API: [https://github.com/thebabush/afl-libprotobuf-mutator](https://github.com/thebabush/afl-libprotobuf-mutator)
 
@@ -293,7 +300,7 @@ anything below 9 is not recommended.
     |
     v
 +---------------------------------+
-| clang/clang++ 3.3+ is available | --> use LLVM mode (afl-clang-fast/afl-clang-fast++)
+| clang/clang++ 3.8+ is available | --> use LLVM mode (afl-clang-fast/afl-clang-fast++)
 +---------------------------------+     see [instrumentation/README.llvm.md](instrumentation/README.llvm.md)
     |
     | if not, or if the target fails with LLVM afl-clang-fast/++
@@ -435,7 +442,7 @@ described in [instrumentation/README.lto.md](instrumentation/README.lto.md).
 ##### cmake
 
 For `cmake` build systems this is usually done by:
-`mkdir build; cmake -DCMAKE_C_COMPILERC=afl-cc -DCMAKE_CXX_COMPILER=afl-c++ ..`
+`mkdir build; cd build; cmake -DCMAKE_C_COMPILER=afl-cc -DCMAKE_CXX_COMPILER=afl-c++ ..`
 
 Note that if you are using the (better) afl-clang-lto compiler you also have to
 set AR to llvm-ar[-VERSION] and RANLIB to llvm-ranlib[-VERSION] - as is
@@ -569,8 +576,15 @@ to use afl-clang-lto as the compiler. You also have the option to generate
 a dictionary yourself, see [utils/libtokencap/README.md](utils/libtokencap/README.md).
 
 afl-fuzz has a variety of options that help to workaround target quirks like
-specific locations for the input file (`-f`), not performing deterministic
-fuzzing (`-d`) and many more. Check out `afl-fuzz -h`.
+specific locations for the input file (`-f`), performing deterministic
+fuzzing (`-D`) and many more. Check out `afl-fuzz -h`.
+
+We highly recommend that you set a memory limit for running the target with `-m`
+which defines the maximum memory in MB. This prevents a potential
+out-of-memory problem for your system plus helps you detect missing `malloc()`
+failure handling in the target.
+Play around with various -m values until you find one that safely works for all
+your input seeds (if you have good ones and then double or quadrouple that.
 
 By default afl-fuzz never stops fuzzing. To terminate afl++ simply press Control-C
 or send a signal SIGINT. You can limit the number of executions or approximate runtime
@@ -605,28 +619,34 @@ Every -M/-S entry needs a unique name (that can be whatever), however the same
 For every secondary fuzzer there should be a variation, e.g.:
  * one should fuzz the target that was compiled differently: with sanitizers
    activated (`export AFL_USE_ASAN=1 ; export AFL_USE_UBSAN=1 ;
-   export AFL_USE_CFISAN=1 ; `
- * one should fuzz the target with CMPLOG/redqueen (see above)
+   export AFL_USE_CFISAN=1 ; export AFL_USE_LSAN=1`)
+ * one or two should fuzz the target with CMPLOG/redqueen (see above), at
+   least one cmplog instance should follow transformations (`-l AT`)
  * one to three fuzzers should fuzz a target compiled with laf-intel/COMPCOV
    (see above). Important note: If you run more than one laf-intel/COMPCOV
    fuzzer and you want them to share their intermediate results, the main
-   fuzzer (`-M`) must be one of the them!
+   fuzzer (`-M`) must be one of the them! (Although this is not really
+   recommended.)
 
 All other secondaries should be used like this:
- * A third to a half with the MOpt mutator enabled: `-L 0`
- * run with a different power schedule, available are:
-   `fast (default), explore, coe, lin, quad, exploit, mmopt, rare, seek`
-   which you can set with e.g. `-p seek`
+ * A quarter to a third with the MOpt mutator enabled: `-L 0`
+ * run with a different power schedule, recommended are:
+   `fast (default), explore, coe, lin, quad, exploit and rare`
+   which you can set with e.g. `-p explore`
+ * a few instances should use the old queue cycling with `-Z`
 
 Also it is recommended to set `export AFL_IMPORT_FIRST=1` to load testcases
 from other fuzzers in the campaign first.
+
+If you have a large corpus, a corpus from a previous run or are fuzzing in
+a CI, then also set `export AFL_CMPLOG_ONLY_NEW=1` and `export AFL_FAST_CAL=1`.
 
 You can also use different fuzzers.
 If you are using afl spinoffs or afl conforming fuzzers, then just use the
 same -o directory and give it a unique `-S` name.
 Examples are:
  * [Eclipser](https://github.com/SoftSec-KAIST/Eclipser/)
- * [Untracer](https://github.com/FoRTE-Research/UnTracer-AFL)
+ * [symcc](https://github.com/eurecom-s/symcc/)
  * [AFLsmart](https://github.com/aflsmart/aflsmart)
  * [FairFuzz](https://github.com/carolemieux/afl-rb)
  * [Neuzz](https://github.com/Dongdongshe/neuzz)
@@ -634,9 +654,11 @@ Examples are:
 
 A long list can be found at [https://github.com/Microsvuln/Awesome-AFL](https://github.com/Microsvuln/Awesome-AFL)
 
-However you can also sync afl++ with honggfuzz, libfuzzer with -entropic, etc.
+However you can also sync afl++ with honggfuzz, libfuzzer with `-entropic=1`, etc.
 Just show the main fuzzer (-M) with the `-F` option where the queue/work
 directory of a different fuzzer is, e.g. `-F /src/target/honggfuzz`.
+Using honggfuzz (with `-n 1` or `-n 2`) and libfuzzer in parallel is highly
+recommended!
 
 #### c) The status of the fuzz campaign
 
@@ -676,8 +698,8 @@ If you see that an important area or a feature has not been covered so far then
 try to find an input that is able to reach that and start a new secondary in
 that fuzzing campaign with that seed as input, let it run for a few minutes,
 then terminate it. The main node will pick it up and make it available to the
-other secondary nodes over time. Set `export AFL_NO_AFFINITY=1` if you have no
-free core.
+other secondary nodes over time. Set `export AFL_NO_AFFINITY=1` or
+`export AFL_TRY_AFFINITY=1` if you have no free core.
 
 Note that you in nearly all cases can never reach full coverage. A lot of
 functionality is usually behind options that were not activated or fuzz e.g.
@@ -763,41 +785,45 @@ campaigns as these are much shorter runnings.
      corpus needs to be loaded.
   * `AFL_CMPLOG_ONLY_NEW` - only perform cmplog on new found paths, not the
     initial corpus as this very likely has been done for them already.
-  * Keep the generated corpus, use afl-cmin and reuse it everytime!
+  * Keep the generated corpus, use afl-cmin and reuse it every time!
 
 2. Additionally randomize the afl++ compilation options, e.g.
   * 40% for `AFL_LLVM_CMPLOG`
   * 10% for `AFL_LLVM_LAF_ALL`
 
 3. Also randomize the afl-fuzz runtime options, e.g.
-  * 60% for `AFL_DISABLE_TRIM`
+  * 65% for `AFL_DISABLE_TRIM`
   * 50% use a dictionary generated by `AFL_LLVM_DICT2FILE`
-  * 50% use MOpt (`-L 0`)
+  * 40% use MOpt (`-L 0`)
   * 40% for `AFL_EXPAND_HAVOC_NOW`
-  * 30% for old queue processing (`-Z`)
+  * 20% for old queue processing (`-Z`)
   * for CMPLOG targets, 60% for `-l 2`, 40% for `-l 3`
 
 4. Do *not* run any `-M` modes, just running `-S` modes is better for CI fuzzing.
-   `-M` enables deterministic fuzzing, old queue handling etc. which is good for
-   a fuzzing campaign but not good for short CI runs.
+   `-M` enables old queue handling etc. which is good for a fuzzing campaign but
+   not good for short CI runs.
 
-How this can look like can e.g. be seen at afl++'s setup in Google's [oss-fuzz](https://github.com/google/oss-fuzz/blob/4bb61df7905c6005000f5766e966e6fe30ab4559/infra/base-images/base-builder/compile_afl#L69).
+How this can look like can e.g. be seen at afl++'s setup in Google's [oss-fuzz](https://github.com/google/oss-fuzz/blob/master/infra/base-images/base-builder/compile_afl)
+and [clusterfuzz](https://github.com/google/clusterfuzz/blob/master/src/python/bot/fuzzers/afl/launcher.py).
 
 ## Fuzzing binary-only targets
 
 When source code is *NOT* available, afl++ offers various support for fast,
 on-the-fly instrumentation of black-box binaries. 
 
-If you do not have to use Unicorn the following setup is recommended:
+If you do not have to use Unicorn the following setup is recommended to use
+qemu_mode:
   * run 1 afl-fuzz -Q instance with CMPLOG (`-c 0` + `AFL_COMPCOV_LEVEL=2`)
   * run 1 afl-fuzz -Q instance with QASAN  (`AFL_USE_QASAN=1`)
-  * run 1 afl-fuzz -Q instance with LAF (``AFL_PRELOAD=libcmpcov.so` + `AFL_COMPCOV_LEVEL=2`)
+  * run 1 afl-fuzz -Q instance with LAF (`AFL_PRELOAD=libcmpcov.so` + `AFL_COMPCOV_LEVEL=2`)
+Alternatively you can use frida_mode, just switch `-Q` with `-O` and remove the
+LAF instance.
 
 Then run as many instances as you have cores left with either -Q mode or - better -
-use a binary rewriter like afl-dyninst, retrowrite, zipr, fibre, etc.
+use a binary rewriter like afl-dyninst, retrowrite, zafl, etc.
 
-For Qemu mode, check out the persistent mode and snapshot features, they give
-a huge speed improvement!  
+For Qemu and Frida mode, check out the persistent mode, it gives a huge speed
+improvement if it is possible to use.
 
 ### QEMU
 
@@ -809,17 +835,30 @@ feature by doing:
 cd qemu_mode
 ./build_qemu_support.sh
 ```
-For additional instructions and caveats, see [qemu_mode/README.md](qemu_mode/README.md) -
-check out the snapshot feature! :-)
+For additional instructions and caveats, see [qemu_mode/README.md](qemu_mode/README.md).
 If possible you should use the persistent mode, see [qemu_mode/README.persistent.md](qemu_mode/README.persistent.md).
 The mode is approximately 2-5x slower than compile-time instrumentation, and is
 less conducive to parallelization.
 
 If [afl-dyninst](https://github.com/vanhauser-thc/afl-dyninst) works for
 your binary, then you can use afl-fuzz normally and it will have twice
-the speed compared to qemu_mode (but slower than persistent mode).
+the speed compared to qemu_mode (but slower than qemu persistent mode).
 Note that several other binary rewriters exist, all with their advantages and
 caveats.
+
+### Frida
+
+Frida mode is sometimes faster and sometimes slower than Qemu mode.
+It is also newer, lacks COMPCOV, but supports MacOS.
+
+```shell
+cd frida_mode
+make
+```
+For additional instructions and caveats, see [frida_mode/README.md](frida_mode/README.md).
+If possible you should use the persistent mode, see [qemu_frida/README.persistent.md](qemu_frida/README.persistent.md).
+The mode is approximately 2-5x slower than compile-time instrumentation, and is
+less conducive to parallelization.
 
 ### Unicorn
 

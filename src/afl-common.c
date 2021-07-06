@@ -479,9 +479,17 @@ void print_suggested_envs(char *mispelled_env) {
 
       size_t end = start + strcspn(afl_env + start, "_") + 1;
       memcpy(reduced, afl_env, start);
-      if (end < afl_env_len)
+      if (end < afl_env_len) {
+
         memcpy(reduced + start, afl_env + end, afl_env_len - end);
-      reduced[afl_env_len - end + start] = 0;
+
+      }
+
+      if (afl_env_len + start >= end) {
+
+        reduced[afl_env_len - end + start] = 0;
+
+      }
 
       int distance = string_distance_levenshtein(reduced, env_name);
       if (distance < ENV_SIMILARITY_TRESHOLD && seen[j] == 0) {
@@ -742,6 +750,8 @@ void read_bitmap(u8 *fname, u8 *map, size_t len) {
   close(fd);
 
 }
+
+/* Get unix time in milliseconds */
 
 u64 get_cur_time(void) {
 
@@ -1109,6 +1119,10 @@ u32 get_map_size(void) {
     }
 
     if (map_size % 64) { map_size = (((map_size >> 6) + 1) << 6); }
+
+  } else if (getenv("AFL_SKIP_BIN_CHECK")) {
+
+    map_size = MAP_SIZE;
 
   }
 

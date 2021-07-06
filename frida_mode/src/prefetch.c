@@ -2,9 +2,13 @@
 #include <sys/shm.h>
 #include <sys/mman.h>
 
-#include "frida-gum.h"
-#include "prefetch.h"
+#include "frida-gumjs.h"
+
 #include "debug.h"
+
+#include "intercept.h"
+#include "prefetch.h"
+#include "stalker.h"
 
 #define TRUST 0
 #define PREFETCH_SIZE 65536
@@ -17,9 +21,10 @@ typedef struct {
 
 } prefetch_data_t;
 
-static prefetch_data_t *prefetch_data = NULL;
+gboolean prefetch_enable = TRUE;
 
-static int prefetch_shm_id = -1;
+static prefetch_data_t *prefetch_data = NULL;
+static int              prefetch_shm_id = -1;
 
 /*
  * We do this from the transformer since we need one anyway for coverage, this
@@ -49,8 +54,9 @@ void prefetch_write(void *addr) {
 /*
  * Read the IPC region one block at the time and prefetch it
  */
-void prefetch_read(GumStalker *stalker) {
+void prefetch_read(void) {
 
+  GumStalker *stalker = stalker_get();
   if (prefetch_data == NULL) return;
 
   for (size_t i = 0; i < prefetch_data->count; i++) {
@@ -68,14 +74,33 @@ void prefetch_read(GumStalker *stalker) {
 
 }
 
-void prefetch_init() {
+void prefetch_config(void) {
+
+  prefetch_enable = (getenv("AFL_FRIDA_INST_NO_PREFETCH") == NULL);
+
+}
+
+static int prefetch_on_fork(void) {
+
+  prefetch_read();
+  return fork();
+
+}
+
+static void prefetch_hook_fork(void) {
+
+  void *fork_addr =
+      GSIZE_TO_POINTER(gum_module_find_export_by_name(NULL, "fork"));
+  intercept_hook(fork_addr, prefetch_on_fork, NULL);
+
+}
+
+void prefetch_init(void) {
 
   g_assert_cmpint(sizeof(prefetch_data_t), ==, PREFETCH_SIZE);
-  gboolean prefetch = (getenv("AFL_FRIDA_INST_NO_PREFETCH") == NULL);
+  OKF("Instrumentation - prefetch [%c]", prefetch_enable ? 'X' : ' ');
 
-  OKF("Instrumentation - prefetch [%c]", prefetch ? 'X' : ' ');
-
-  if (!prefetch) { return; }
+  if (!prefetch_enable) { return; }
   /*
    * Make our shared memory, we can attach before we fork, just like AFL does
    * with the coverage bitmap region and fork will take care of ensuring both
@@ -104,18 +129,7 @@ void prefetch_init() {
   /* Clear it, not sure it's necessary, just seems like good practice */
   memset(prefetch_data, '\0', sizeof(prefetch_data_t));
 
-}
-
-__attribute__((noinline)) static void prefetch_activation() {
-
-  asm volatile("");
-
-}
-
-void prefetch_start(GumStalker *stalker) {
-
-  gum_stalker_activate(stalker, prefetch_activation);
-  prefetch_activation();
+  prefetch_hook_fork();
 
 }
 

@@ -2,11 +2,11 @@
 
   (See [../README.md](../README.md) for the general instruction manual.)
 
-  (See [README.gcc_plugon.md](../README.gcc_plugin.md) for the GCC-based instrumentation.)
+  (See [README.gcc_plugin.md](../README.gcc_plugin.md) for the GCC-based instrumentation.)
 
 ## 1) Introduction
 
-! llvm_mode works with llvm versions 3.4 up to 12 !
+! llvm_mode works with llvm versions 3.8 up to 12 !
 
 The code in this directory allows you to instrument programs for AFL using
 true compiler-level instrumentation, instead of the more crude
@@ -143,6 +143,11 @@ path discovery, but the llvm implementation for x86 for this functionality
 is not optimal and was only fixed in llvm 9.
 You can set this with AFL_LLVM_NOT_ZERO=1
 See [README.neverzero.md](README.neverzero.md)
+
+Support for thread safe counters has been added for all modes.
+Activate it with `AFL_LLVM_THREADSAFE_INST=1`. The tradeoff is better precision
+in multi threaded apps for a slightly higher instrumentation overhead.
+This also disables the nozero counter default for performance reasons.
 
 ## 4) Snapshot feature
 

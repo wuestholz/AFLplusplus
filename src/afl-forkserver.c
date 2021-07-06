@@ -90,6 +90,7 @@ void afl_fsrv_init(afl_forkserver_t *fsrv) {
   /* exec related stuff */
   fsrv->child_pid = -1;
   fsrv->map_size = get_map_size();
+  fsrv->real_map_size = fsrv->map_size;
   fsrv->use_fauxsrv = false;
   fsrv->last_run_timed_out = false;
   fsrv->debug = false;
@@ -110,6 +111,7 @@ void afl_fsrv_init_dup(afl_forkserver_t *fsrv_to, afl_forkserver_t *from) {
   fsrv_to->init_tmout = from->init_tmout;
   fsrv_to->mem_limit = from->mem_limit;
   fsrv_to->map_size = from->map_size;
+  fsrv_to->real_map_size = from->real_map_size;
   fsrv_to->support_shmem_fuzz = from->support_shmem_fuzz;
   fsrv_to->out_file = from->out_file;
   fsrv_to->dev_urandom_fd = from->dev_urandom_fd;
@@ -416,7 +418,7 @@ void afl_fsrv_start(afl_forkserver_t *fsrv, char **argv,
 
     struct rlimit r;
 
-    if (!fsrv->cmplog_binary && fsrv->qemu_mode == false) {
+    if (!fsrv->cmplog_binary) {
 
       unsetenv(CMPLOG_SHM_ENV_VAR);  // we do not want that in non-cmplog fsrv
 
@@ -450,8 +452,12 @@ void afl_fsrv_start(afl_forkserver_t *fsrv, char **argv,
     /* Dumping cores is slow and can lead to anomalies if SIGKILL is delivered
        before the dump is complete. */
 
-    //    r.rlim_max = r.rlim_cur = 0;
-    //    setrlimit(RLIMIT_CORE, &r);                      /* Ignore errors */
+    if (!fsrv->debug) {
+
+      r.rlim_max = r.rlim_cur = 0;
+      setrlimit(RLIMIT_CORE, &r);                          /* Ignore errors */
+
+    }
 
     /* Isolate the process and configure standard descriptors. If out_file is
        specified, stdin is /dev/null; otherwise, out_fd is cloned instead. */
@@ -502,7 +508,7 @@ void afl_fsrv_start(afl_forkserver_t *fsrv, char **argv,
 
     if (!getenv("LD_BIND_LAZY")) { setenv("LD_BIND_NOW", "1", 1); }
 
-    /* Set sane defaults for ASAN if nothing else specified. */
+    /* Set sane defaults for ASAN if nothing else is specified. */
 
     if (!getenv("ASAN_OPTIONS"))
       setenv("ASAN_OPTIONS",
@@ -519,7 +525,7 @@ void afl_fsrv_start(afl_forkserver_t *fsrv, char **argv,
              "handle_sigill=0",
              1);
 
-    /* Set sane defaults for UBSAN if nothing else specified. */
+    /* Set sane defaults for UBSAN if nothing else is specified. */
 
     if (!getenv("UBSAN_OPTIONS"))
       setenv("UBSAN_OPTIONS",
@@ -556,6 +562,16 @@ void afl_fsrv_start(afl_forkserver_t *fsrv, char **argv,
            "handle_sigfpe=0:"
            "handle_sigill=0",
            1);
+
+    /* LSAN, too, does not support abort_on_error=1. */
+
+    if (!getenv("LSAN_OPTIONS"))
+      setenv("LSAN_OPTIONS",
+            "exitcode=" STRINGIFY(LSAN_ERROR) ":"
+            "fast_unwind_on_malloc=0:"
+            "symbolize=0:"
+            "print_suppressions=0",
+            1);
 
     fsrv->init_child_func(fsrv, argv);
 
@@ -676,15 +692,15 @@ void afl_fsrv_start(afl_forkserver_t *fsrv, char **argv,
 
         if (!fsrv->map_size) { fsrv->map_size = MAP_SIZE; }
 
-        if (unlikely(tmp_map_size % 64)) {
+        fsrv->real_map_size = tmp_map_size;
 
-          // should not happen
-          WARNF("Target reported non-aligned map size of %u", tmp_map_size);
+        if (tmp_map_size % 64) {
+
           tmp_map_size = (((tmp_map_size + 63) >> 6) << 6);
 
         }
 
-        if (!be_quiet) { ACTF("Target map size: %u", tmp_map_size); }
+        if (!be_quiet) { ACTF("Target map size: %u", fsrv->real_map_size); }
         if (tmp_map_size > fsrv->map_size) {
 
           FATAL(
@@ -811,7 +827,9 @@ void afl_fsrv_start(afl_forkserver_t *fsrv, char **argv,
 
   if (fsrv->last_run_timed_out) {
 
-    FATAL("Timeout while initializing fork server (adjusting -t may help)");
+    FATAL(
+        "Timeout while initializing fork server (setting "
+        "AFL_FORKSRV_INIT_TMOUT may help)");
 
   }
 
@@ -1077,7 +1095,7 @@ void afl_fsrv_write_to_testcase(afl_forkserver_t *fsrv, u8 *buf, size_t len) {
 
 #endif
 
-  if (likely(fsrv->use_shmem_fuzz && fsrv->shmem_fuzz)) {
+  if (likely(fsrv->use_shmem_fuzz)) {
 
     if (unlikely(len > MAX_FILE)) len = MAX_FILE;
 
@@ -1303,8 +1321,10 @@ fsrv_run_result_t afl_fsrv_run_target(afl_forkserver_t *fsrv, u32 timeout,
   if (unlikely(
           /* A normal crash/abort */
           (WIFSIGNALED(fsrv->child_status)) ||
-          /* special handling for msan */
-          (fsrv->uses_asan && WEXITSTATUS(fsrv->child_status) == MSAN_ERROR) ||
+          /* special handling for msan and lsan */
+          (fsrv->uses_asan &&
+           (WEXITSTATUS(fsrv->child_status) == MSAN_ERROR ||
+            WEXITSTATUS(fsrv->child_status) == LSAN_ERROR)) ||
           /* the custom crash_exitcode was returned by the target */
           (fsrv->uses_crash_exitcode &&
            WEXITSTATUS(fsrv->child_status) == fsrv->crash_exitcode))) {

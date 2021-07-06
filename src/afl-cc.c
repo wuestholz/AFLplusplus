@@ -315,7 +315,7 @@ static void edit_params(u32 argc, char **argv, char **envp) {
 
   u8 fortify_set = 0, asan_set = 0, x_set = 0, bit_mode = 0, shared_linking = 0,
      preprocessor_only = 0, have_unroll = 0, have_o = 0, have_pic = 0,
-     have_c = 0;
+     have_c = 0, partial_linking = 0;
 
   cc_params = ck_alloc((argc + 128) * sizeof(u8 *));
 
@@ -430,9 +430,6 @@ static void edit_params(u32 argc, char **argv, char **envp) {
 
     cc_params[cc_par_cnt++] = "-Wno-unused-command-line-argument";
 
-    if (lto_mode && plusplus_mode)
-      cc_params[cc_par_cnt++] = "-lc++";  // needed by fuzzbench, early
-
     if (lto_mode && have_instr_env) {
 
       cc_params[cc_par_cnt++] = "-Xclang";
@@ -517,14 +514,14 @@ static void edit_params(u32 argc, char **argv, char **envp) {
 
     unsetenv("AFL_LD");
     unsetenv("AFL_LD_CALLER");
+
     if (cmplog_mode) {
 
       if (lto_mode && !have_c) {
 
         cc_params[cc_par_cnt++] = alloc_printf(
-            "-Wl,-mllvm=-load=%s/cmplog-routines-pass.so", obj_path);
-        cc_params[cc_par_cnt++] = alloc_printf(
-            "-Wl,-mllvm=-load=%s/cmplog-instructions-pass.so", obj_path);
+            "-Wl,-mllvm=-load=%s/cmplog-switches-pass.so", obj_path);
+
         cc_params[cc_par_cnt++] = alloc_printf(
             "-Wl,-mllvm=-load=%s/split-switches-pass.so", obj_path);
 
@@ -534,13 +531,7 @@ static void edit_params(u32 argc, char **argv, char **envp) {
         cc_params[cc_par_cnt++] = "-load";
         cc_params[cc_par_cnt++] = "-Xclang";
         cc_params[cc_par_cnt++] =
-            alloc_printf("%s/cmplog-routines-pass.so", obj_path);
-
-        cc_params[cc_par_cnt++] = "-Xclang";
-        cc_params[cc_par_cnt++] = "-load";
-        cc_params[cc_par_cnt++] = "-Xclang";
-        cc_params[cc_par_cnt++] =
-            alloc_printf("%s/cmplog-instructions-pass.so", obj_path);
+            alloc_printf("%s/cmplog-switches-pass.so", obj_path);
 
         // reuse split switches from laf
         cc_params[cc_par_cnt++] = "-Xclang";
@@ -563,12 +554,14 @@ static void edit_params(u32 argc, char **argv, char **envp) {
     if (lto_mode && !have_c) {
 
       u8 *ld_path = strdup(AFL_REAL_LD);
-      if (!*ld_path) ld_path = "ld.lld";
+      if (!ld_path || !*ld_path) { ld_path = strdup("ld.lld"); }
+      if (!ld_path) { PFATAL("Could not allocate mem for ld_path"); }
 #if defined(AFL_CLANG_LDPATH) && LLVM_MAJOR >= 12
       cc_params[cc_par_cnt++] = alloc_printf("--ld-path=%s", ld_path);
 #else
       cc_params[cc_par_cnt++] = alloc_printf("-fuse-ld=%s", ld_path);
 #endif
+      free(ld_path);
 
       cc_params[cc_par_cnt++] = "-Wl,--allow-multiple-definition";
 
@@ -639,6 +632,33 @@ static void edit_params(u32 argc, char **argv, char **envp) {
         cc_params[cc_par_cnt++] = "-load";
         cc_params[cc_par_cnt++] = "-Xclang";
         cc_params[cc_par_cnt++] = alloc_printf("%s/afl-llvm-pass.so", obj_path);
+
+      }
+
+    }
+
+    if (cmplog_mode) {
+
+      if (lto_mode && !have_c) {
+
+        cc_params[cc_par_cnt++] = alloc_printf(
+            "-Wl,-mllvm=-load=%s/cmplog-instructions-pass.so", obj_path);
+        cc_params[cc_par_cnt++] = alloc_printf(
+            "-Wl,-mllvm=-load=%s/cmplog-routines-pass.so", obj_path);
+
+      } else {
+
+        cc_params[cc_par_cnt++] = "-Xclang";
+        cc_params[cc_par_cnt++] = "-load";
+        cc_params[cc_par_cnt++] = "-Xclang";
+        cc_params[cc_par_cnt++] =
+            alloc_printf("%s/cmplog-instructions-pass.so", obj_path);
+
+        cc_params[cc_par_cnt++] = "-Xclang";
+        cc_params[cc_par_cnt++] = "-load";
+        cc_params[cc_par_cnt++] = "-Xclang";
+        cc_params[cc_par_cnt++] =
+            alloc_printf("%s/cmplog-routines-pass.so", obj_path);
 
       }
 
@@ -768,6 +788,10 @@ static void edit_params(u32 argc, char **argv, char **envp) {
     if (!strcmp(cur, "-x")) x_set = 1;
     if (!strcmp(cur, "-E")) preprocessor_only = 1;
     if (!strcmp(cur, "-shared")) shared_linking = 1;
+    if (!strcmp(cur, "-Wl,-r")) partial_linking = 1;
+    if (!strcmp(cur, "-Wl,--relocatable")) partial_linking = 1;
+    if (!strcmp(cur, "-r")) partial_linking = 1;
+    if (!strcmp(cur, "--relocatable")) partial_linking = 1;
     if (!strcmp(cur, "-c")) have_c = 1;
 
     if (!strncmp(cur, "-O", 2)) have_o = 1;
@@ -816,6 +840,14 @@ static void edit_params(u32 argc, char **argv, char **envp) {
     cc_params[cc_par_cnt++] = "-fsanitize=undefined";
     cc_params[cc_par_cnt++] = "-fsanitize-undefined-trap-on-error";
     cc_params[cc_par_cnt++] = "-fno-sanitize-recover=all";
+
+  }
+
+  if (getenv("AFL_USE_LSAN")) {
+
+    cc_params[cc_par_cnt++] = "-fsanitize=leak";
+    cc_params[cc_par_cnt++] = "-includesanitizer/lsan_interface.h";
+    cc_params[cc_par_cnt++] = "-D__AFL_LEAK_CHECK()=__lsan_do_leak_check()";
 
   }
 
@@ -989,7 +1021,7 @@ static void edit_params(u32 argc, char **argv, char **envp) {
     switch (bit_mode) {
 
       case 0:
-        if (!shared_linking)
+        if (!shared_linking && !partial_linking)
           cc_params[cc_par_cnt++] =
               alloc_printf("%s/afl-compiler-rt.o", obj_path);
         if (lto_mode)
@@ -998,7 +1030,7 @@ static void edit_params(u32 argc, char **argv, char **envp) {
         break;
 
       case 32:
-        if (!shared_linking) {
+        if (!shared_linking && !partial_linking) {
 
           cc_params[cc_par_cnt++] =
               alloc_printf("%s/afl-compiler-rt-32.o", obj_path);
@@ -1019,7 +1051,7 @@ static void edit_params(u32 argc, char **argv, char **envp) {
         break;
 
       case 64:
-        if (!shared_linking) {
+        if (!shared_linking && !partial_linking) {
 
           cc_params[cc_par_cnt++] =
               alloc_printf("%s/afl-compiler-rt-64.o", obj_path);
@@ -1042,7 +1074,7 @@ static void edit_params(u32 argc, char **argv, char **envp) {
     }
 
   #if !defined(__APPLE__) && !defined(__sun)
-    if (!shared_linking)
+    if (!shared_linking && !partial_linking)
       cc_params[cc_par_cnt++] =
           alloc_printf("-Wl,--dynamic-list=%s/dynamic_list.txt", obj_path);
   #endif
@@ -1216,6 +1248,14 @@ int main(int argc, char **argv, char **envp) {
   for (i = 1; i < argc; i++) {
 
     if (strncmp(argv[i], "--afl", 5) == 0) {
+
+      if (!strcmp(argv[i], "--afl_noopt") || !strcmp(argv[i], "--afl-noopt")) {
+
+        passthrough = 1;
+        argv[i] = "-g";  // we have to overwrite it, -g is always good
+        continue;
+
+      }
 
       if (compiler_mode)
         WARNF(
@@ -1442,9 +1482,11 @@ int main(int argc, char **argv, char **envp) {
 
       }
 
-      if (strncasecmp(ptr2, "ctx-", strlen("ctx-")) == 0) {
+      if (strncasecmp(ptr2, "ctx-", strlen("ctx-")) == 0 ||
+          strncasecmp(ptr2, "kctx-", strlen("c-ctx-")) == 0 ||
+          strncasecmp(ptr2, "k-ctx-", strlen("k-ctx-")) == 0) {
 
-        u8 *ptr3 = ptr2 + strlen("ctx-");
+        u8 *ptr3 = ptr2;
         while (*ptr3 && (*ptr3 < '0' || *ptr3 > '9'))
           ptr3++;
 
@@ -1480,7 +1522,7 @@ int main(int argc, char **argv, char **envp) {
 
       }
 
-      if (strncasecmp(ptr2, "ctx", strlen("ctx")) == 0) {
+      if (strcasecmp(ptr2, "ctx") == 0) {
 
         instrument_opt_mode |= INSTRUMENT_OPT_CTX;
         setenv("AFL_LLVM_CTX", "1", 1);
@@ -1565,7 +1607,12 @@ int main(int argc, char **argv, char **envp) {
     else if (have_gcc_plugin)
       compiler_mode = GCC_PLUGIN;
     else if (have_gcc)
+#ifdef __APPLE__
+      // on OSX clang masquerades as GCC
+      compiler_mode = CLANG;
+#else
       compiler_mode = GCC;
+#endif
     else if (have_lto)
       compiler_mode = LTO;
     else
@@ -1587,7 +1634,12 @@ int main(int argc, char **argv, char **envp) {
 
   }
 
-  if (compiler_mode == CLANG) { instrument_mode = INSTRUMENT_CLANG; }
+  if (compiler_mode == CLANG) {
+
+    instrument_mode = INSTRUMENT_CLANG;
+    setenv(CLANG_ENV_VAR, "1", 1);  // used by afl-as
+
+  }
 
   if (argc < 2 || strncmp(argv[1], "-h", 2) == 0) {
 
@@ -1621,7 +1673,7 @@ int main(int argc, char **argv, char **envp) {
         "   yes\n"
         "  [LLVM] llvm:             %s%s\n"
         "      PCGUARD              %s      yes yes     module yes yes    "
-        "extern\n"
+        "yes\n"
         "      CLASSIC              %s      no  yes     module yes yes    "
         "yes\n"
         "        - NORMAL\n"
@@ -1728,7 +1780,8 @@ int main(int argc, char **argv, char **envp) {
           "  AFL_USE_ASAN: activate address sanitizer\n"
           "  AFL_USE_CFISAN: activate control flow sanitizer\n"
           "  AFL_USE_MSAN: activate memory sanitizer\n"
-          "  AFL_USE_UBSAN: activate undefined behaviour sanitizer\n");
+          "  AFL_USE_UBSAN: activate undefined behaviour sanitizer\n"
+          "  AFL_USE_LSAN: activate leak-checker sanitizer\n");
 
       if (have_gcc_plugin)
         SAYF(
@@ -1749,6 +1802,8 @@ int main(int argc, char **argv, char **envp) {
         SAYF(
             "\nLLVM/LTO/afl-clang-fast/afl-clang-lto specific environment "
             "variables:\n"
+            "  AFL_LLVM_THREADSAFE_INST: instrument with thread safe counters, "
+            "disables neverzero\n"
 
             COUNTER_BEHAVIOUR
 
@@ -1800,6 +1855,12 @@ int main(int argc, char **argv, char **envp) {
             "path\n"
             "If anything fails - be sure to read README.lto.md!\n");
 #endif
+
+      SAYF(
+          "\nYou can supply --afl-noopt to not instrument, like AFL_NOOPT. "
+          "(this is helpful\n"
+          "in some build systems if you do not want to instrument "
+          "everything.\n");
 
     }
 
