@@ -2512,6 +2512,7 @@ u8 input_to_state_stage(afl_state_t *afl, u8 *orig_buf, u8 *buf, u32 len) {
     else if (taint->pos == 0 && taint->len == len) {
 
       fprintf(stderr, "TAINT FULL\n");
+      return 0;
 
     }
 
