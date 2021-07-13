@@ -938,8 +938,10 @@ common_fuzz_stuff(afl_state_t *afl, u8 *out_buf, u32 len) {
 
       for (u64 i = 0; i < buf_max_len; i++) {
         struct fuzz_event event = buffer->events[i];
-        fprintf(f, "%ld,%llx,%llx\n", event.timestamp, event.original_cksum,
-                event.fuzzed_cksum);
+        // We reduce the size of the checksums to save space.
+        u32 oc32 = event.original_cksum - (event.original_cksum >> ((u64)32));
+        u32 fc32 = event.fuzzed_cksum - (event.fuzzed_cksum >> ((u64)32));
+        fprintf(f, "%ld,%x,%x\n", event.dur, oc32, fc32);
       }
       fflush(f);
       // fclose(f);
@@ -950,13 +952,15 @@ common_fuzz_stuff(afl_state_t *afl, u8 *out_buf, u32 len) {
 
     u64 cur_cksum = afl->queue_cur->exec_cksum;
     if (cur_cksum) {
-      struct timespec tms;
-      if (clock_gettime(CLOCK_REALTIME, &tms)) { PFATAL("Unable to get time"); }
-      int64_t ms = tms.tv_sec * 1000000;
-      ms += tms.tv_nsec / 1000;
-      if (tms.tv_nsec % 1000 >= 500) { ++ms; }
+      struct timespec time_now;
+      if (clock_gettime(CLOCK_REALTIME, &time_now)) {
+        PFATAL("Unable to get time");
+      }
+      if (buffer->started_at < 1 && buf_size < 1) {
+        buffer->started_at = time_now.tv_sec;
+      }
       struct fuzz_event new_event;
-      new_event.timestamp = ms;
+      new_event.dur = time_now.tv_sec - buffer->started_at;
       new_event.original_cksum = afl->queue_cur->exec_cksum;
       new_event.fuzzed_cksum =
           hash64(afl->fsrv.trace_bits, afl->fsrv.map_size, HASH_CONST);
