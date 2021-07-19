@@ -410,6 +410,19 @@ struct foreign_sync {
 
 };
 
+struct fuzz_event {
+  int64_t dur;
+  u64     original_cksum;
+  u64     fuzzed_cksum;
+};
+
+struct fuzz_event_buffer {
+  FILE *            log_file;
+  struct fuzz_event events[16384];
+  u64               size;
+  int64_t           started_at;
+};
+
 typedef struct afl_state {
 
   /* Position of this state in the global states list */
@@ -758,6 +771,8 @@ typedef struct afl_state {
   FILE *introspection_file;
   u32   bitsmap_size;
 #endif
+
+  struct fuzz_event_buffer event_buffer;
 
 } afl_state_t;
 

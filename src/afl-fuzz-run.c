@@ -27,6 +27,7 @@
 #include "afl-fuzz.h"
 #include <sys/time.h>
 #include <signal.h>
+#include <time.h>
 #include <limits.h>
 #if !defined NAME_MAX
   #define NAME_MAX _XOPEN_NAME_MAX
@@ -920,6 +921,53 @@ common_fuzz_stuff(afl_state_t *afl, u8 *out_buf, u32 len) {
   write_to_testcase(afl, out_buf, len);
 
   fault = fuzz_run_target(afl, &afl->fsrv, afl->fsrv.exec_tmout);
+
+  int write_event_log = 1;
+  if (write_event_log) {
+    struct fuzz_event_buffer *buffer = &afl->event_buffer;
+    u64                       buf_size = buffer->size;
+    u64                       buf_max_len = 16384;
+    if (buf_max_len <= buf_size) {
+      // TODO(wuestholz): Trigger this before AFL terminates.
+      FILE *f = buffer->log_file;
+      if (!f) {
+        f = fopen(alloc_printf("%s/fuzz_event_log.csv", afl->out_dir), "w");
+        if (!f) { PFATAL("Unable to create 'fuzz_event_log.csv'"); }
+        buffer->log_file = f;
+      }
+
+      for (u64 i = 0; i < buf_max_len; i++) {
+        struct fuzz_event event = buffer->events[i];
+        // We reduce the size of the checksums to save space.
+        u32 oc32 = event.original_cksum - (event.original_cksum >> ((u64)32));
+        u32 fc32 = event.fuzzed_cksum - (event.fuzzed_cksum >> ((u64)32));
+        fprintf(f, "%ld,%x,%x\n", event.dur, oc32, fc32);
+      }
+      fflush(f);
+      // fclose(f);
+
+      buf_size = 0;
+      buffer->size = buf_size;
+    }
+
+    u64 cur_cksum = afl->queue_cur->exec_cksum;
+    if (cur_cksum) {
+      struct timespec time_now;
+      if (clock_gettime(CLOCK_REALTIME, &time_now)) {
+        PFATAL("Unable to get time");
+      }
+      if (buffer->started_at < 1 && buf_size < 1) {
+        buffer->started_at = time_now.tv_sec;
+      }
+      struct fuzz_event new_event;
+      new_event.dur = time_now.tv_sec - buffer->started_at;
+      new_event.original_cksum = afl->queue_cur->exec_cksum;
+      new_event.fuzzed_cksum =
+          hash64(afl->fsrv.trace_bits, afl->fsrv.map_size, HASH_CONST);
+      buffer->events[buf_size] = new_event;
+      buffer->size++;
+    }
+  }
 
   if (afl->stop_soon) { return 1; }
 
