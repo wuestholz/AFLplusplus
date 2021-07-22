@@ -758,25 +758,27 @@ void show_stats(afl_state_t *afl) {
   SAYF(bV bSTOP " last uniq crash : " cRST "%-33s " bSTG bV bSTOP
                 " uniq crashes : %s%-6s" bSTG               bV "\n",
        time_tmp, crash_color, tmp);
+  if (afl->schedule >= FAST && afl->schedule <= RARE) {
 
+    u64 singleton = 0;
+    for (u32 i = 0; i < afl->queued_paths; i++) {
+
+      struct queue_entry *q = afl->queue_buf[i];
+      if (afl->n_fuzz_tmp[q->n_fuzz_entry] == 1) { ++singleton; }
+
+    }
+    sprintf(tmp, "%s%s", u_stringify_int(IB(0), singleton),
+          (afl->unique_hangs >= KEEP_UNIQUE_HANG) ? "+" : "");
+  } else {
   sprintf(tmp, "%s%s", u_stringify_int(IB(0), afl->unique_hangs),
           (afl->unique_hangs >= KEEP_UNIQUE_HANG) ? "+" : "");
+  }
 
   if (afl->schedule >= FAST && afl->schedule <= RARE) {
 
-    u64 is_one = 0;
-    for (u32 i = 0; i < N_FUZZ_SIZE; ++i) {
+    if (afl->time_to_next != 0xFFFFFFFF) {
 
-      if (afl->n_fuzz_tmp[i] == 1) { ++is_one; }
-
-    }
-
-    if (is_one) {
-
-      u64 t2f = (afl->fsrv.total_execs *
-                 (afl->total_cal_us / afl->total_cal_cycles)) /
-                is_one;
-      u_stringify_time_diff(time_tmp, t2f * 1000, 1);
+      u_stringify_time_diff(time_tmp, afl->time_to_next, 1);
       SAYF(bV bSTOP "    next find in : " cRST "%-33s " bSTG bV bSTOP
                     "   uniq hangs : " cRST "%-6s" bSTG         bV "\n",
            time_tmp, tmp);
