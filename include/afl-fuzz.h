@@ -534,6 +534,7 @@ typedef struct afl_state {
 
 #define N_FUZZ_SIZE (1 << 21)
   u32 *n_fuzz, *n_fuzz_tmp;
+  u64 time_to_next;
 
   volatile u8 stop_soon,                /* Ctrl-C pressed?                  */
       clear_screen;                     /* Window resized?                  */

@@ -522,6 +522,20 @@ save_if_interesting(afl_state_t *afl, void *mem, u32 len, u8 fault) {
 
     if (afl->queued_paths % 10 == 0) {
 
+      u64 singleton = 0;
+      for (u32 i = 0; i < afl->queued_paths; i++) {
+
+        struct queue_entry *q = afl->queue_buf[i];
+        if (afl->n_fuzz_tmp[q->n_fuzz_entry] == 1) { ++singleton; }
+
+      }
+
+      if (singleton) {
+        afl->time_to_next = (afl->prev_run_time + get_cur_time() - afl->start_time) / (double) singleton;
+      } else {
+        afl->time_to_next = 0xFFFFFFFF;
+      }
+
       memset(afl->n_fuzz_tmp, 0, N_FUZZ_SIZE * sizeof(u32));
 
     }
