@@ -500,6 +500,19 @@ struct foreign_sync {
 
 };
 
+struct fuzz_event {
+  int64_t dur;
+  u64     original_cksum;
+  u64     fuzzed_cksum;
+};
+
+struct fuzz_event_buffer {
+  FILE *            log_file;
+  struct fuzz_event events[16384];
+  u64               size;
+  int64_t           started_at;
+};
+
 typedef struct afl_state {
 
   /* Position of this state in the global states list */
@@ -898,6 +911,8 @@ typedef struct afl_state {
   u8              is_doing_ijon;      /* Flag to track IJON execution state */
   dynamic_shared_access_t
       *ijon_shared_access;         /* IJON shared access for dynamic offset */
+
+  struct fuzz_event_buffer event_buffer;
 
 } afl_state_t;
 
